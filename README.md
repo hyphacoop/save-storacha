@@ -3,28 +3,36 @@
 ## architecture
 
 ```mermaid
-flowchart TD
-    subgraph mobile
-        User["user view"]
-        Admin["admin view"]
+flowchart LR
+    %% mobile clients
+    subgraph Mobile["mobile apps"]
+        style Mobile fill:#1e1e1e,stroke:#444,color:#ddd
+        UA["Space User"]
+        AA["Space Admin"]
     end
 
-    subgraph backend
-        style backend fill:#1e1e1e,stroke:#444,color:#ddd
-        Axum["server"]
-        DB[(sled DB)]
-        Axum --> DB
-        Axum --> Token["token engine"]
-        Axum --> SpaceMgr["space manager"]
+    %% token service
+    subgraph TokenSvc["token-svc (node/js)"]
+        style TokenSvc fill:#282828,stroke:#666,color:#ddd
+        API["API"]
+        KV["Key vault"]
+        SDK["@web3-storage/w3up-client"]
+        API --> KV
+        API --> SDK
     end
 
-    subgraph storacha
-        Bridge["bridge /tasks"]
-        Storage
-        Bridge --> Storage
+    %% storacha storage
+    subgraph Storacha["storacha storage"]
+        style Storacha fill:#181818,stroke:#555,color:#ddd
+        BR["HTTP API bridge"]
+        DB["Storage Backend"]
+        BR --> DB
     end
 
-    User  -- /token --> Axum
-    Admin -- /spaces/import /allow --> Axum
-    User  -- CAR + headers --> Bridge
+    %% flows
+    AA -- "POST /space/import" --> API
+    AA -- "POST /delegate"     --> API
+    UA -- "POST /token"        --> API
+    API -- "token + CID"       --> UA
+    UA -- "CAR + headers"      --> BR
 ```
