@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     %% mobile clients
-    subgraph Mobile["mobile apps"]
+    subgraph Mobile["mobile app"]
         style Mobile fill:#1e1e1e,stroke:#444,color:#ddd
         UA["Space User"]
         AA["Space Admin"]
@@ -25,7 +25,7 @@ flowchart LR
     subgraph Storacha["storacha storage"]
         style Storacha fill:#181818,stroke:#555,color:#ddd
         BR["HTTP API bridge"]
-        DB["Storage Backend"]
+        DB["Storage"]
         BR --> DB
     end
 
