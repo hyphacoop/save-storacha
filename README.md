@@ -1,6 +1,6 @@
 # Save Storacha
 
-## architecture
+## Proposed architecture
 
 ```mermaid
 flowchart LR
@@ -37,7 +37,7 @@ flowchart LR
     UA -- "CAR + headers"      --> BR
 ```
 
-## sequence diagram
+## Sequence diagram
 ```mermaid
 sequenceDiagram
     autonumber
