@@ -12,7 +12,7 @@ flowchart LR
     end
 
     %% token service
-    subgraph TokenSvc["token-svc (node/js)"]
+    subgraph TokenSvc["token-svc"]
         style TokenSvc fill:#282828,stroke:#666,color:#ddd
         API["API"]
         KV["Key vault"]
@@ -68,3 +68,31 @@ sequenceDiagram
         Bridge  -->> UserApp: 200 / receipt
     end
 ```
+
+## User journeys
+
+### Admin journey
+
+- logs in with email
+- selects space
+- inputs user DID to delegate upload cabapilities
+
+### User journey
+- app generates keypair + DID
+- user copies DID and sends to admin
+- (once delegation is issued, auth tokens are generated)
+- users uploads to storacha
+
+## UI
+
+### Admin view
+
+- email input
+- space dropdown
+- user DID input
+
+### User view
+
+- did string
+- copy to clipboard and/or QR code
+- (once delegated) upload UI
