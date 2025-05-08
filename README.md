@@ -73,7 +73,8 @@ sequenceDiagram
 
 ### Admin journey
 (on storacha)
-- creates an account and a space  
+- creates an account and a space
+
 (in app)
 - logs in with email
 - selects space
