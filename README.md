@@ -72,7 +72,9 @@ sequenceDiagram
 ## User journeys
 
 ### Admin journey
-
+(on storacha)
+- creates an account and a space
+(in app)
 - logs in with email
 - selects space
 - inputs user DID to delegate upload cabapilities
