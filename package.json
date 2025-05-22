@@ -1,0 +1,29 @@
+{
+  "name": "save-storacha",
+  "version": "1.0.0",
+  "description": "## Proposed architecture",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyphacoop/save-storacha.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hyphacoop/save-storacha/issues"
+  },
+  "homepage": "https://github.com/hyphacoop/save-storacha#readme",
+  "dependencies": {
+    "@ipld/car": "^5.4.1",
+    "@ucanto/core": "^10.4.0",
+    "@web3-storage/w3up-client": "^17.2.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
+  }
+}
