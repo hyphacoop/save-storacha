@@ -20,10 +20,18 @@
   },
   "homepage": "https://github.com/hyphacoop/save-storacha#readme",
   "dependencies": {
-    "@ipld/car": "^5.4.1",
+    "@ipld/car": "^5.4.2",
+    "@ipld/dag-ucan": "^3.4.5",
     "@ucanto/core": "^10.4.0",
-    "@web3-storage/w3up-client": "^17.2.0",
+    "@ucanto/principal": "^9.0.2",
+    "@web3-storage/w3up-client": "^17.3.0",
+    "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "express-rate-limit": "^7.5.0",
+    "ipfs-car": "^3.0.0",
+    "multer": "^2.0.0",
+    "multiformats": "^13.3.6",
+    "node-fetch": "^2.7.0"
   }
 }
