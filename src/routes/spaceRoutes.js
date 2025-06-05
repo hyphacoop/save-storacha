@@ -87,4 +87,98 @@ router.get('/usage', ensureAuthenticated, async (req, res) => {
     }
 });
 
+// GET /spaces/account-usage - Get total usage across all spaces for an admin
+router.get('/account-usage', ensureAuthenticated, async (req, res) => {
+    const adminEmail = req.userEmail;
+
+    try {
+        logger.info('Account usage request received', { adminEmail });
+        const client = getClient();
+        
+        // Get all spaces for the admin
+        const spaces = await SpaceService.getSpaces(adminEmail);
+        if (!spaces || spaces.length === 0) {
+            return res.json({
+                totalUsage: {
+                    bytes: 0,
+                    mb: 0,
+                    human: "0 MB"
+                },
+                spaces: []
+            });
+        }
+
+        // Get usage for each space
+        const spaceUsages = [];
+        let totalBytes = 0;
+
+        for (const space of spaces) {
+            try {
+                // Get usage report for all time
+                const period = { from: new Date(0), to: new Date() };
+                const usage = await client.capability.usage.report(space.did, period);
+                
+                // Extract the 'final' value from the usage report
+                let finalBytes = 0;
+                if (usage && usage[Object.keys(usage)[0]] && usage[Object.keys(usage)[0]].size && typeof usage[Object.keys(usage)[0]].size.final === 'number') {
+                    finalBytes = usage[Object.keys(usage)[0]].size.final;
+                }
+                
+                const finalMB = +(finalBytes / 1048576).toFixed(4);
+                const human = `${finalMB} MB`;
+                
+                spaceUsages.push({
+                    spaceDid: space.did,
+                    name: space.name,
+                    usage: {
+                        bytes: finalBytes,
+                        mb: finalMB,
+                        human
+                    }
+                });
+
+                totalBytes += finalBytes;
+            } catch (error) {
+                logger.error('Failed to get usage for space', { 
+                    adminEmail, 
+                    spaceDid: space.did, 
+                    error: error.message 
+                });
+                // Continue with other spaces even if one fails
+                spaceUsages.push({
+                    spaceDid: space.did,
+                    name: space.name,
+                    error: error.message,
+                    usage: {
+                        bytes: 0,
+                        mb: 0,
+                        human: "0 MB"
+                    }
+                });
+            }
+        }
+
+        const totalMB = +(totalBytes / 1048576).toFixed(4);
+        const totalHuman = `${totalMB} MB`;
+
+        res.json({
+            totalUsage: {
+                bytes: totalBytes,
+                mb: totalMB,
+                human: totalHuman
+            },
+            spaces: spaceUsages
+        });
+
+    } catch (error) {
+        logger.error('Failed to get account usage', { 
+            adminEmail, 
+            error: error.message 
+        });
+        res.status(500).json({ 
+            message: error.message || 'Failed to get account usage'
+        });
+    }
+});
+
 export default router; 
