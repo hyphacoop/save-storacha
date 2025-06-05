@@ -6,11 +6,14 @@ npm-debug.log*
 
 # Sensitive data
 cookies.txt
-w3up-client-data/
 .env
 .env.*
 *.pem
 *.key
+*.db
+*.sqlite
+*.sqlite3
+data/
 
 # Dependencies
 node_modules/
