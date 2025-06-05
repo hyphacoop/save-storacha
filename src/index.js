@@ -45,9 +45,12 @@ app.use((err, req, res, next) => {
 
 async function main() {
     try {
-        // Clear all stores before initializing
-        clearClientState();
-        clearStores();
+        // Only clear stores in development mode
+        const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev';
+        if (isDev) {
+            clearClientState();
+            clearStores();
+        }
         
         // Initialize database
         await setupDatabase();
