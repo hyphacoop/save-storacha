@@ -86,7 +86,7 @@ flowchart LR
 - `GET /spaces` - List spaces for authenticated admin
 - `POST /spaces/import` - Import a space
 - `POST /spaces/delegate` - Delegate user permissions
-- `GET /spaces/usage` - Get space usage information (requires spaceDid query parameter)
+- `GET /spaces/usage` - Get space usage information (requires spaceDid query parameter and admin authentication)
 
 ### Upload Paths
 There are two ways to upload files:
@@ -130,10 +130,88 @@ There are two ways to upload files:
 - `GET /delegations/list` - List delegations (admin only, requires session)
 - `POST /delegations/create` - Create a delegation (admin only, requires session)
 - `GET /delegations/get` - Get delegation details for a specific space
+- `DELETE /delegations/revoke` - Revoke a delegation (admin only, requires session)
+  ```bash
+  # Revoke all delegations for a user in a space
+  curl -X DELETE \
+    -H "x-session-id: your-session-id" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "userDid": "did:key:user-did-here",
+      "spaceDid": "did:key:space-did-here"
+    }' \
+    http://localhost:3000/delegations/revoke
+
+  # Success Response (200):
+  {
+    "message": "Delegations revoked successfully",
+    "userDid": "did:key:...",
+    "spaceDid": "did:key:...",
+    "revokedCount": 1
+  }
+
+  # Error Responses:
+  # 400 - Missing required fields
+  {
+    "message": "userDid and spaceDid are required"
+  }
+  
+  # 404 - No active delegation found
+  {
+    "message": "No active delegation found for this user and space"
+  }
+  
+  # 500 - Server error
+  {
+    "message": "Failed to revoke delegations"
+  }
+  ```
 
 ### Storage
-- `GET /bridge/status` - Check upload status
-- `GET /bridge/quota` - Get storage quota
+- `GET /spaces/usage` - Get space usage information (requires spaceDid query parameter and admin authentication)
+  ```bash
+  # Example response:
+  {
+    "spaceDid": "did:key:your-space-did",
+    "usage": {
+      "bytes": 11744,
+      "mb": 0.0112,
+      "human": "0.0112 MB"
+    }
+  }
+  ```
+
+### Account Usage (Admin)
+- `GET /spaces/account-usage` - Get total storage usage across all spaces for the authenticated admin
+  - **Required header:** `x-session-id` (admin session ID)
+  - **Description:** Returns the total storage usage for all spaces owned by the admin, as well as per-space usage breakdown.
+  - **Example:**
+    ```bash
+    curl -H "x-session-id: your-session-id" \
+      http://localhost:3000/spaces/account-usage
+    ```
+    **Example response:**
+    ```json
+    {
+      "totalUsage": {
+        "bytes": 307966,
+        "mb": 0.2937,
+        "human": "0.2937 MB"
+      },
+      "spaces": [
+        {
+          "spaceDid": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA",
+          "name": "delegation_test",
+          "usage": {
+            "bytes": 11744,
+            "mb": 0.0112,
+            "human": "0.0112 MB"
+          }
+        },
+        // ... more spaces ...
+      ]
+    }
+    ```
 
 ## Development Setup
 
@@ -354,3 +432,204 @@ curl -H "x-session-id: your-session-id" \
 - Upload interface
 - Upload status tracking
 - Storage quota display
+
+## Complete Example: Delegation and Upload
+
+Here's a complete example of the delegation and upload process using real DIDs and responses:
+
+### 1. Admin Login
+```bash
+# Login with email and DID
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@email.net",
+    "did": "did:key:z6MkujSWEBZStjaPYidedRXqWD3iNgkZuqBm32zHVbgSDJsY"
+  }' \
+  http://localhost:3000/auth/login/email
+
+# Response:
+{
+  "message": "Login successful",
+  "sessionId": "c0035bba684a603a18c4aa2f548e32ff",
+  "did": "did:key:z6MkujSWEBZStjaPYidedRXqWD3iNgkZuqBm32zHVbgSDJsY"
+}
+```
+
+### 2. List Spaces
+```bash
+# List available spaces
+curl -H "x-session-id: c0035bba684a603a18c4aa2f548e32ff" \
+  http://localhost:3000/spaces
+
+# Response:
+[
+  {
+    "did": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA",
+    "name": "delegation_test"
+  },
+  // ... more spaces ...
+]
+```
+
+### 3. Create Delegation
+```bash
+# Create delegation for a user
+curl -X POST -H "x-session-id: c0035bba684a603a18c4aa2f548e32ff" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+    "spaceDid": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA"
+  }' \
+  http://localhost:3000/delegations/create
+
+# Response:
+{
+  "message": "Delegation created successfully",
+  "principalDid": "did:key:z6Mkmr5cq8AX2fMZ4zoUAuHayLGwLnRkTksgqXGRVKwg7gGb",
+  "delegationCid": "bafyreihbbauer7b5qp4o32b76ollcu4phesghoueyduqbf232hqsy4atjy",
+  "expiresAt": "2025-06-06T17:48:53.116Z"
+}
+```
+
+### 4. Verify User's Access
+```bash
+# Check spaces accessible to the user
+curl -H "x-user-did: did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr" \
+  http://localhost:3000/delegations/user/spaces
+
+# Response:
+{
+  "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+  "spaces": ["did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA"],
+  "expiresAt": "2025-06-06T17:48:53.116Z"
+}
+```
+
+### 5. Upload File
+```bash
+# Create a test file
+echo "Hello June 5 2025 13:49 Eastern time!" > test-file.txt
+
+# Upload the file
+curl -X POST \
+  -H "x-user-did: did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr" \
+  -F "file=@test-file.txt" \
+  -F "spaceDid=did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA" \
+  http://localhost:3000/upload
+
+# Response:
+{
+  "success": true,
+  "cid": "bafkreibkchotcmrno56vb3vw7gdkxq7c2sixqswsvj7iq2e57f55trfnuu",
+  "size": 38
+}
+```
+
+### 6. Check Space Usage
+```bash
+# Check space usage as admin
+curl -H "x-session-id: c0035bba684a603a18c4aa2f548e32ff" \
+  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA"
+
+# Response:
+{
+  "spaceDid": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA",
+  "usage": {
+    "bytes": 12256,
+    "mb": 0.0117,
+    "human": "0.0117 MB"
+  }
+}
+```
+
+This example demonstrates:
+- Complete admin login flow
+- Space listing
+- Delegation creation with real DIDs
+- Verification of user access
+- File upload with delegation
+- Usage monitoring
+
+The delegation grants the user access to the space until the expiration date (in this case, June 6th, 2025). The user can upload files to the space using their DID in the `x-user-did` header.
+
+## Complete Example: Revoking a Delegation
+
+Here's a complete example of revoking a user's access to a space:
+
+### 1. Verify Current Access
+```bash
+# Check spaces accessible to the user before revocation
+curl -H "x-user-did: did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr" \
+  http://localhost:3000/delegations/user/spaces
+
+# Response:
+{
+  "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+  "spaces": ["did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA"],
+  "expiresAt": "2025-06-06T17:48:53.116Z"
+}
+```
+
+### 2. Revoke the Delegation
+```bash
+# Revoke all delegations for the user in the space
+curl -X DELETE \
+  -H "x-session-id: c0035bba684a603a18c4aa2f548e32ff" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+    "spaceDid": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA"
+  }' \
+  http://localhost:3000/delegations/revoke
+
+# Response:
+{
+  "message": "Delegations revoked successfully",
+  "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+  "spaceDid": "did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA",
+  "revokedCount": 1
+}
+```
+
+### 3. Verify Access is Revoked
+```bash
+# Check spaces accessible to the user after revocation
+curl -H "x-user-did: did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr" \
+  http://localhost:3000/delegations/user/spaces
+
+# Response:
+{
+  "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr",
+  "spaces": [],
+  "expiresAt": null
+}
+```
+
+### 4. Verify Upload is Blocked
+```bash
+# Attempt to upload a file (should fail)
+echo "Test upload after revocation" > test-revocation.txt
+curl -X POST \
+  -H "x-user-did: did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr" \
+  -F "file=@test-revocation.txt" \
+  -F "spaceDid=did:key:z6MkfUhCYVDxnnpw47uDESen3xhg5pYDY1SChD2TuxdEUHWA" \
+  http://localhost:3000/upload
+
+# Response:
+{
+  "error": "No valid delegation found",
+  "userDid": "did:key:z6Mknq1W5c3fRyry4vgw9VUitFJQZ1p9CyA9BBPyju9QHvAr"
+}
+```
+
+This example demonstrates:
+- Checking user's access before revocation
+- Revoking a delegation using admin session
+- Verifying that access is revoked
+- Confirming that uploads are blocked after revocation
+
+The revocation process is immediate and permanent. Once a delegation is revoked:
+- The user loses access to the space
+- Any attempts to upload files will fail
+- The user's spaces list will be empty
+- A new delegation must be created to restore access
