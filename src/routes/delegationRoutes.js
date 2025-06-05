@@ -6,7 +6,7 @@ import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
 import { parse as parseDID } from '@ipld/dag-ucan/did';
 import { Signer } from '@ucanto/principal/ed25519';
-import { storeDelegation, getDelegationsForUser, getDelegationsForSpace, storeUserPrincipal } from '../lib/store.js';
+import { storeDelegation, getDelegationsForUser, getDelegationsForSpace, storeUserPrincipal, revokeDelegation } from '../lib/store.js';
 
 const router = express.Router();
 
@@ -301,21 +301,76 @@ router.get('/user/spaces', async (req, res) => {
     }
 });
 
-// DELETE /delegations/revoke - Revoke a delegation (future implementation)
+// DELETE /delegations/revoke - Revoke a delegation
 router.delete('/revoke', ensureAuthenticated, async (req, res) => {
-    const { delegationCid } = req.body;
+    const { userDid, spaceDid } = req.body;
     const adminEmail = req.userEmail;
 
-    if (!delegationCid) {
+    if (!userDid || !spaceDid) {
         return res.status(400).json({ 
-            message: 'delegationCid is required' 
+            message: 'userDid and spaceDid are required' 
         });
     }
 
-    // TODO: Implement delegation revocation
-    res.status(501).json({ 
-        message: 'Delegation revocation not yet implemented' 
-    });
+    try {
+        logger.info('Delegation revocation request received', { 
+            adminEmail, 
+            userDid, 
+            spaceDid
+        });
+
+        // Get active delegations for the user and space
+        const delegations = getDelegationsForUser(userDid);
+        const activeDelegations = delegations.filter(d => 
+            d.spaceDid === spaceDid && 
+            (!d.expiresAt || d.expiresAt > Date.now())
+        );
+
+        if (activeDelegations.length === 0) {
+            return res.status(404).json({ 
+                message: 'No active delegation found for this user and space' 
+            });
+        }
+
+        // Revoke all active delegations for this user-space pair
+        let revokedCount = 0;
+        for (const delegation of activeDelegations) {
+            const wasRevoked = revokeDelegation(userDid, spaceDid, delegation.delegationCid);
+            if (wasRevoked) {
+                revokedCount++;
+            }
+        }
+
+        if (revokedCount === 0) {
+            return res.status(500).json({ 
+                message: 'Failed to revoke delegations' 
+            });
+        }
+
+        logger.info('Delegations revoked successfully', { 
+            userDid,
+            spaceDid,
+            revokedCount
+        });
+
+        res.json({
+            message: 'Delegations revoked successfully',
+            userDid,
+            spaceDid,
+            revokedCount
+        });
+
+    } catch (error) {
+        logger.error('Delegation revocation failed', { 
+            adminEmail, 
+            userDid, 
+            spaceDid,
+            error: error.message 
+        });
+        res.status(500).json({ 
+            message: error.message || 'Failed to revoke delegations'
+        });
+    }
 });
 
 // GET /delegations/get - Get delegation CAR for a user and space
