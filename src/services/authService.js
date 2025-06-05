@@ -8,9 +8,10 @@ import * as Signer from '@ucanto/principal/ed25519';
 import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
 import { logger } from '../lib/logger.js';
+import { getDatabase } from '../lib/db.js';
 
 // This function will be called after successful w3up email confirmation
-export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client) {
+export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client, providedDid = null) {
     logger.info('Setting up authorization', { adminEmail });
     if (!client) {
         throw new Error('Client must be provided to handleAdminW3UpAuthorization');
@@ -74,7 +75,9 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client)
 
         // Store data
         storeAdminServiceDidData(adminEmail, adminDid, adminServiceDidPrincipal, delegationCarString);
-        const { sessionId } = createSession(adminEmail);
+        
+        // Create session with the provided DID if available, otherwise use adminDid
+        const { sessionId } = createSession(adminEmail, providedDid || adminDid);
         logger.info('Authorization complete', { sessionId });
 
         return { sessionId };
@@ -85,8 +88,8 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client)
     }
 }
 
-export async function requestAdminLoginViaW3Up(email) {
-    logger.info('Requesting login', { email });
+export async function requestAdminLoginViaW3Up(email, did = null) {
+    logger.info('Requesting login', { email, did });
     const client = getClient();
     
     try {
@@ -98,6 +101,16 @@ export async function requestAdminLoginViaW3Up(email) {
         try {
             await account.plan.wait();
             logger.info('Payment plan confirmed');
+            
+            // Create DID-email mapping right after payment plan is confirmed
+            if (did) {wdq
+                const db = getDatabase();
+                db.prepare(`
+                    INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
+                    VALUES (?, ?, ?)
+                `).run(did, email, Date.now());
+                logger.info('Created DID-email mapping', { did, email });
+            }
         } catch (e) {
             logger.debug('No payment plan required or already set');
         }
@@ -141,7 +154,7 @@ export async function requestAdminLoginViaW3Up(email) {
         
         // Step 5: Store admin data and create session
         const adminDid = client.agent.did();
-        const authResult = await handleAdminW3UpAuthorization(email, adminDid, client);
+        const authResult = await handleAdminW3UpAuthorization(email, adminDid, client, did);
         
         if (authResult.error) {
             throw new Error(authResult.error);
@@ -149,7 +162,8 @@ export async function requestAdminLoginViaW3Up(email) {
         
         return { 
             message: 'Login successful',
-            sessionId: authResult.sessionId
+            sessionId: authResult.sessionId,
+            did: did || null
         };
     } catch (error) {
         logger.error('Login failed', { error: error.message });
@@ -178,6 +192,54 @@ export async function logoutFromW3Up() {
         return { message: 'Logout successful' };
     } catch (error) {
         logger.error('Error during w3up logout', { error: error.message });
+        throw error;
+    }
+}
+
+// Modify handleDidLogin to only handle subsequent logins
+export async function handleDidLogin(did) {
+    logger.info('Handling DID login', { did });
+    const client = getClient();
+
+    try {
+        // Verify the DID exists in our system
+        const db = getDatabase();
+        const mapping = db.prepare(`
+            SELECT email FROM did_email_mapping 
+            WHERE did = ?
+        `).get(did);
+
+        if (!mapping) {
+            throw new Error('No account found for this DID. Please login with email first.');
+        }
+
+        // Check if there's an active session for this email
+        const activeSession = db.prepare(`
+            SELECT sessionId FROM active_account_sessions 
+            WHERE email = ? 
+            ORDER BY createdAt DESC LIMIT 1
+        `).get(mapping.email);
+
+        if (activeSession) {
+            // Reuse existing session
+            logger.info('Reusing existing session for DID login', { did, email: mapping.email });
+            return {
+                message: 'DID login successful',
+                sessionId: activeSession.sessionId
+            };
+        }
+
+        // Create a new session for this DID
+        const { sessionId } = createSession(mapping.email, did);
+        logger.info('Created new session for DID login', { did, email: mapping.email });
+        
+        return {
+            message: 'DID login successful',
+            sessionId
+        };
+
+    } catch (error) {
+        logger.error('DID login failed', { did, error: error.message });
         throw error;
     }
 } 
