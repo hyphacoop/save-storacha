@@ -659,4 +659,72 @@ export function getCachedSpaces(email) {
     }
     
     return adminData.cachedSpaces;
+}
+
+/**
+ * Revokes a delegation by removing it from both memory and database stores
+ * @param {string} userDid - The user's DID
+ * @param {string} spaceDid - The space DID
+ * @param {string} delegationCid - The delegation CID to revoke
+ * @returns {boolean} - True if delegation was found and revoked, false otherwise
+ */
+export function revokeDelegation(userDid, spaceDid, delegationCid) {
+    // In dev mode, don't modify delegations
+    if (isDevAuth()) {
+        logger.debug('Dev mode: Skipping delegation revocation', { userDid, spaceDid, delegationCid });
+        return false;
+    }
+
+    try {
+        // Update memory store
+        const existingDelegations = delegationStore.get(userDid) || [];
+        const delegationIndex = existingDelegations.findIndex(d => 
+            d.spaceDid === spaceDid && d.delegationCid === delegationCid
+        );
+
+        if (delegationIndex === -1) {
+            logger.info('Delegation not found in memory store', { userDid, spaceDid, delegationCid });
+            return false;
+        }
+
+        // Remove the delegation from memory
+        existingDelegations.splice(delegationIndex, 1);
+        if (existingDelegations.length === 0) {
+            delegationStore.delete(userDid);
+        } else {
+            delegationStore.set(userDid, existingDelegations);
+        }
+
+        // Update database
+        const db = getDatabase();
+        const result = db.prepare(`
+            DELETE FROM delegations 
+            WHERE userDid = ? AND spaceDid = ? AND delegationCid = ?
+        `).run(userDid, spaceDid, delegationCid);
+
+        const wasDeleted = result.changes > 0;
+        if (wasDeleted) {
+            logger.info('Revoked delegation', { 
+                userDid, 
+                spaceDid, 
+                delegationCid 
+            });
+        } else {
+            logger.info('Delegation not found in database', { 
+                userDid, 
+                spaceDid, 
+                delegationCid 
+            });
+        }
+
+        return wasDeleted;
+    } catch (error) {
+        logger.error('Failed to revoke delegation', { 
+            userDid, 
+            spaceDid, 
+            delegationCid, 
+            error: error.message 
+        });
+        return false;
+    }
 } 
