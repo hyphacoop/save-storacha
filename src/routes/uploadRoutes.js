@@ -18,6 +18,7 @@ import { ed25519 } from '@ucanto/principal';
 import { CarWriter } from '@ipld/car/writer';
 import { getClient } from '../lib/w3upClient.js';
 import { generateAuthHeaders } from '../lib/token-generation.js';
+import { logger } from '../lib/logger.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -79,14 +80,6 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
             size: req.file.size
         });
 
-        // Get the principal that was created for this user
-        const userPrincipal = await getUserPrincipal(userDid);
-        if (!userPrincipal) {
-            console.log('No principal found for user:', userDid);
-            return res.status(403).json({ error: 'No principal found for user', userDid });
-        }
-        console.log('Found principal for user:', userPrincipal.did());
-
         // Get delegations for the user
         const delegations = await getDelegationsForUser(userDid);
         console.log('Found delegations:', delegations ? delegations.length : 0);
@@ -118,13 +111,12 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
         let importedDelegation = null;
 
         try {
-            // Create a new memory store and upload client with the user's principal
-            const memoryStore = new StoreMemory();
-            const uploadClient = await createW3upClient({ 
-                principal: userPrincipal,
-                store: memoryStore 
-            });
-            console.log('Created upload client with user principal');
+            // Use the admin client instead of creating a new client with user's principal
+            const uploadClient = getClient();
+            if (!uploadClient) {
+                throw new Error('w3up client not initialized');
+            }
+            console.log('Using admin client for upload with DID:', uploadClient.did());
 
             // Import and add the delegation proof
             try {
@@ -218,11 +210,41 @@ router.get('/bridge-tokens', async (req, res) => {
             return res.status(400).json({ error: 'Missing userDid or spaceDid' });
         }
 
-        const { headers, delegationInfo } = await generateAuthHeaders(userDid, spaceDid);
-        res.json({ headers, delegationInfo });
+        logger.info('[bridge-tokens] Generating tokens for user', { userDid, spaceDid });
+
+        try {
+            const { headers } = await generateAuthHeaders(userDid, spaceDid)
+            
+            // Log the complete information for testing
+            logger.info('[bridge-tokens] ✅ Tokens generated successfully');
+            logger.info('[bridge-tokens] Headers:', {
+                'X-Auth-Secret': headers['X-Auth-Secret'],
+                'Authorization': headers['Authorization'].substring(0, 100) + '...'
+            });
+            
+            // Generate and log curl command
+            const curlCommand = `curl -X POST \\
+  -H "X-Auth-Secret: ${headers['X-Auth-Secret']}" \\
+  -H "Authorization: ${headers['Authorization']}" \\
+  -F "file=@/path/to/your/file.txt" \\
+  https://up.storacha.network/bridge`;
+            
+            logger.info('[bridge-tokens] 🧪 Test with curl:');
+            logger.info('[bridge-tokens] ' + curlCommand);
+            
+            res.json({ 
+                headers,
+                curlCommand,
+                note: 'Replace /path/to/your/file.txt with actual file path for testing'
+            });
+            
+        } catch (err) {
+            logger.error('[bridge-tokens] Token generation failed:', err);
+            res.status(500).json({ error: err.message });
+        }
 
     } catch (error) {
-        logger.error('Bridge token generation failed:', error);
+        logger.error('[bridge-tokens] Bridge token generation failed:', error);
         res.status(error.message.includes('No principal found') ? 403 : 500)
            .json({ error: error.message });
     }
