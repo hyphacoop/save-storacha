@@ -1,7 +1,34 @@
+/**
+ * Core Data Store Module
+ * 
+ * This module manages the application's core data storage system, handling:
+ * 1. User Principals - Cryptographic identities for users
+ * 2. Delegations - Access grants between users and spaces
+ * 3. Admin Data - Administrative credentials and session management
+ * 
+ * The system uses a dual-layer storage approach:
+ * - In-memory stores for fast access (Map objects)
+ * - SQLite database for persistence
+ * 
+ * Key Features:
+ * - Automatic cleanup of expired delegations
+ * - Development mode integration with devAuth
+ * - Session management for admin users
+ * - Delegation revocation support
+ * 
+ * Storage Structure:
+ * - adminStore: Maps admin emails to their service credentials
+ * - sessionStore: Manages admin user sessions
+ * - delegationStore: Maps user DIDs to their space delegations
+ * - userPrincipalStore: Maps user DIDs to their cryptographic principals
+ */
+
 import { logger } from './logger.js';
 import { getDatabase } from './db.js';
 import { generatePrincipal, exportPrincipal, importPrincipal } from './signer.js';
 import { getDevPrincipal, getDevUserDid, isDevAuth } from './devAuth.js';
+import { ed25519 } from '@ucanto/principal';
+import { sha256 } from '@ucanto/core';
 
 // Stores adminEmail -> { adminServicePrincipal, adminToAdminServiceDidDelegationCarString, adminDid, sessionId (optional), sessionExpiresAt (optional) }
 const adminStore = new Map();
@@ -18,23 +45,34 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 // Add cleanup interval constant
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
-// --- Admin Data Functions ---
+/**
+ * Admin Data Management
+ * Stores and manages administrative credentials and service principals.
+ * This includes the admin's DID, service principal, and delegation chain.
+ */
+
 export function storeAdminServiceDidData(email, adminDid, adminServicePrincipal, adminToAdminServiceDidDelegationCarString) {
     const existingAdmin = adminStore.get(email) || {};
     adminStore.set(email, {
         ...existingAdmin,
         adminDid,
-        adminServicePrincipal,
-        adminToAdminServiceDidDelegationCarString,
+        adminServicePrincipal, // Can be null in simplified mode
+        adminToAdminServiceDidDelegationCarString, // Can be null in simplified mode
     });
-    console.log(`Stored Admin Service DID data for ${email}. Admin DID: ${adminDid}`);
+    console.log(`Stored Admin data for ${email}. Admin DID: ${adminDid} (simplified mode: ${adminServicePrincipal ? 'with service DID' : 'no service DID'})`);
 }
 
 export function getAdminData(email) {
     return adminStore.get(email);
 }
 
-// --- Session Management ---
+/**
+ * Session Management
+ * Handles admin user sessions with configurable duration.
+ * Sessions are persisted in the database and loaded on startup.
+ * Includes automatic expiration and cleanup.
+ */
+
 export function createSession(email, adminDid = null, metadata = {}) {
     const sessionId = crypto.randomBytes(16).toString('hex');
     const now = Date.now();
@@ -290,7 +328,13 @@ async function cleanupExpiredSessions() {
 
 import crypto from 'crypto';
 
-// --- User Principal Functions ---
+/**
+ * User Principal Management
+ * Handles the lifecycle of user cryptographic identities (principals).
+ * Principals are used for signing and authentication operations.
+ * In development mode, principals are managed by devAuth instead.
+ */
+
 export async function storeUserPrincipal(userDid, principal) {
     // In dev mode, don't store principals - they come from dev cache
     if (isDevAuth()) {
@@ -360,22 +404,43 @@ export async function getUserPrincipal(userDid) {
             WHERE userDid = ?
         `).get(userDid);
 
-        if (!row) {
-            return null;
+        if (row) {
+            // Reconstruct the principal from stored key material
+            const principal = importPrincipal(row.principalKey);
+            
+            // Update memory store
+            userPrincipalStore.set(userDid, {
+                principal,
+                createdAt: row.createdAt
+            });
+
+            return principal;
         }
-
-        // Reconstruct the principal from stored key material
-        const principal = importPrincipal(row.principalKey);
-        
-        // Update memory store
-        userPrincipalStore.set(userDid, {
-            principal,
-            createdAt: row.createdAt
-        });
-
-        return principal;
     } catch (error) {
         logger.error('Failed to get user principal from database', { 
+            userDid, 
+            error: error.message 
+        });
+    }
+
+    // If no stored principal found, derive one from the user DID (same as token generation)
+    try {
+        logger.info('No stored principal found, deriving from user DID', { userDid });
+        const secretBytes = new TextEncoder().encode(userDid);
+        const { digest } = await sha256.digest(secretBytes);
+        const principal = await ed25519.Signer.derive(digest);
+        
+        // Store the derived principal for future use
+        await storeUserPrincipal(userDid, principal);
+        
+        logger.info('Derived and stored principal from user DID', { 
+            userDid, 
+            principalDid: principal.did() 
+        });
+        
+        return principal;
+    } catch (error) {
+        logger.error('Failed to derive principal from user DID', { 
             userDid, 
             error: error.message 
         });
@@ -383,7 +448,15 @@ export async function getUserPrincipal(userDid) {
     }
 }
 
-// --- Delegation Functions ---
+/**
+ * Delegation Management
+ * Manages access grants between users and spaces.
+ * Delegations are stored both in memory and database for:
+ * - Fast access to active delegations
+ * - Persistence across server restarts
+ * - Automatic expiration handling
+ */
+
 export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar, expiresAt = null) {
     // In dev mode, don't store delegations - they come from dev cache
     if (isDevAuth()) {
