@@ -1,3 +1,28 @@
+/**
+ * Web3.Storage Client Management Module
+ * 
+ * This module manages the Web3.Storage client lifecycle and state for the application.
+ * It provides a singleton client instance that handles:
+ * 
+ * 1. Client Initialization
+ *    - Creates and configures the Web3.Storage client
+ *    - Loads existing proofs from disk
+ *    - Manages client state across server restarts
+ * 
+ * 2. Storage Operations
+ *    - Handles file uploads to Web3.Storage
+ *    - Manages space access and permissions
+ *    - Tracks storage usage and limits
+ * 
+ * 3. State Management
+ *    - Maintains client singleton instance
+ *    - Persists client state to disk
+ *    - Handles client reinitialization
+ * 
+ * The module uses a local filesystem store to persist client state
+ * between server restarts, ensuring continuity of operations.
+ */
+
 import { create, Client } from '@web3-storage/w3up-client'
 import { importDAG } from '@ucanto/core/delegation'
 import { CarReader } from '@ipld/car/reader'
@@ -12,6 +37,18 @@ let serverDid = null
 
 const storePath = path.join(process.cwd(), 'w3up-client-data')
 
+/**
+ * Loads the client's proof store from disk
+ * 
+ * This function attempts to load any existing client state from disk,
+ * specifically looking for:
+ * 1. The proof.car file containing delegation proofs
+ * 2. Any existing client configuration
+ * 
+ * If no state exists, it returns undefined to trigger fresh initialization.
+ * 
+ * @returns {Promise<{proof: import('@ucanto/core/delegation').Delegation} | undefined>}
+ */
 async function loadStore() {
   try {
     await fs.mkdir(storePath, { recursive: true })
@@ -47,6 +84,20 @@ export function clearClientState() {
   logger.debug('Cleared client state')
 }
 
+/**
+ * Initializes the Web3.Storage client
+ * 
+ * This function:
+ * 1. Clears any existing client state
+ * 2. Attempts to load existing state from disk
+ * 3. Creates a new client instance
+ * 4. Configures the client with any loaded proofs
+ * 5. Verifies client accounts and spaces
+ * 
+ * The client is stored as a singleton instance for the application.
+ * 
+ * @returns {Promise<{client: Client, serverDid: string}>}
+ */
 export async function initializeW3UpClient() {
   clearClientState()
   
