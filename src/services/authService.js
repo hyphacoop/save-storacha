@@ -18,32 +18,18 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
     }
 
     try {
-        // Generate Admin Service DID
-        const adminServiceDidPrincipal = await Signer.generate(); 
-        const adminServiceDidString = adminServiceDidPrincipal.did();
-        logger.debug('Generated Admin Service DID');
+        // Skip Admin Service DID generation - use admin account directly
+        // Since we're working with DIDs for identification only, not principals
+        const adminAccount = client.agent;
+        logger.debug('Using admin account directly (no service DID)');
 
-        // Create delegation
-        const issuerPrincipal = client.agent;
-        const abilities = ['space/*','store/*','upload/*']; 
-        const delegationToAdminServiceDid = await client.createDelegation(
-            adminServiceDidPrincipal,
-            abilities,
-            {
-                expiration: Infinity,
-                resource: issuerPrincipal.did()
-            }
-        );
-
-        // Extract and log spaces (truncated)
+        // Extract and log spaces directly from admin account
         const spaces = [];
-        for (const proof of delegationToAdminServiceDid.prf || []) {
-            if (proof.fct?.[0]?.space?.name) {
-                spaces.push({
-                    name: proof.fct[0].space.name,
-                    did: proof.iss
-                });
-            }
+        for (const space of client.spaces()) {
+            spaces.push({
+                name: space.name || space.did(),
+                did: space.did()
+            });
         }
         
         // Cache the spaces
@@ -55,30 +41,12 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
             });
         }
 
-        // Encode delegation to CAR format
-        const { writer, out } = await CarWriter.create([delegationToAdminServiceDid.cid]);
-        const carChunks = [];
-        const carPromise = (async () => {
-            for await (const chunk of out) {
-                carChunks.push(chunk);
-            }
-        })();
-
-        for await (const block of delegationToAdminServiceDid.export()) {
-            await writer.put(block);
-        }
-        await writer.close();
-        await carPromise;
-        
-        const delegationCar = Buffer.concat(carChunks);
-        const delegationCarString = base64.encode(delegationCar);
-
-        // Store data
-        storeAdminServiceDidData(adminEmail, adminDid, adminServiceDidPrincipal, delegationCarString);
+        // Store admin data without service DID (simplified)
+        storeAdminServiceDidData(adminEmail, adminDid, null, null);
         
         // Create session with the provided DID if available, otherwise use adminDid
         const { sessionId } = createSession(adminEmail, providedDid || adminDid);
-        logger.info('Authorization complete', { sessionId });
+        logger.info('Authorization complete (simplified)', { sessionId });
 
         return { sessionId };
 
