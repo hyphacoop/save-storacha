@@ -6,6 +6,8 @@ import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
 import { parse as parseDID } from '@ipld/dag-ucan/did';
 import { Signer } from '@ucanto/principal/ed25519';
+import { ed25519 } from '@ucanto/principal';
+import { sha256 } from '@ucanto/core';
 import { storeDelegation, getDelegationsForUser, getDelegationsForSpace, storeUserPrincipal, revokeDelegation } from '../lib/store.js';
 
 const router = express.Router();
@@ -35,20 +37,26 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
             throw new Error('w3up client not initialized');
         }
 
-        // Generate (or retrieve) a principal for the user (using Signer.generate) and store it.
-        const userPrincipal = await Signer.generate();
+        // Generate (or retrieve) a principal for the user using the same method as token generation
+        const secretBytes = new TextEncoder().encode(userDid);
+        const { digest } = await sha256.digest(secretBytes);
+        const userPrincipal = await ed25519.Signer.derive(digest);
         await storeUserPrincipal(userDid, userPrincipal);
         console.log('Delegation creation: userPrincipal DID:', userPrincipal.did());
+        console.log('Delegation creation: userDid from request:', userDid);
+        console.log('Delegation creation: admin client DID:', client.did());
+        console.log('Delegation creation: DID match:', userDid === userPrincipal.did());
 
         // Calculate expiration time
         const expirationHours = expiresIn || 24;
         const expirationTime = Date.now() + (expirationHours * 60 * 60 * 1000);
 
-        // Create delegation with necessary capabilities
+        // Create delegation with minimal capabilities for file uploads
         const abilities = [
-            'space/*',    // High-level space operations
-            'store/*',    // Storage operations
-            'upload/*'    // Upload operations
+            'upload/add',           // Upload capability
+            'store/*',              // Storage operations
+            'space/blob/add',       // Add blobs to space (required for uploads)
+            'space/index/add'       // Add to space index (required for uploads)
         ];
         const delegation = await client.createDelegation(
             userPrincipal,
@@ -56,8 +64,8 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
             {
                 expiration: expirationTime,
                 resource: spaceDid,
-                // Add a note to indicate this is a direct delegation with full capabilities
-                note: 'Direct delegation with space, store, and upload capabilities'
+                // Add a note to indicate this is a minimal delegation
+                note: 'Minimal delegation with upload/add and store capabilities'
             }
         );
 
@@ -139,10 +147,15 @@ router.post('/create-simple', ensureAuthenticated, async (req, res) => {
             throw new Error('w3up client not initialized');
         }
 
-        // Generate a principal for the user
-        const userPrincipal = await Signer.generate();
+        // Generate a principal for the user using the same method as token generation
+        const secretBytes = new TextEncoder().encode(userDid);
+        const { digest } = await sha256.digest(secretBytes);
+        const userPrincipal = await ed25519.Signer.derive(digest);
         await storeUserPrincipal(userDid, userPrincipal);
         logger.info('Simple delegation: userPrincipal DID:', userPrincipal.did());
+        logger.info('Simple delegation: userDid from request:', userDid);
+        logger.info('Simple delegation: admin client DID:', client.did());
+        logger.info('Simple delegation: DID match:', userDid === userPrincipal.did());
 
         // Create a simplified delegation with just upload capability
         // Using a shorter expiration time (1 hour) for testing
@@ -150,11 +163,16 @@ router.post('/create-simple', ensureAuthenticated, async (req, res) => {
 
         const delegation = await client.createDelegation(
             userPrincipal,
-            ['upload/*'], // Only upload capability
+            [
+                'upload/add',           // Upload capability
+                'store/*',              // Storage operations
+                'space/blob/add',       // Add blobs to space (required for uploads)
+                'space/index/add'       // Add to space index (required for uploads)
+            ],
             {
                 expiration: expirationTime,
                 resource: spaceDid,
-                note: 'Simplified delegation for testing - upload only'
+                note: 'Minimal delegation for file uploads - includes essential upload and blob capabilities'
             }
         );
 
