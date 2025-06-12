@@ -56,34 +56,41 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
     }
 }
 
-export async function requestAdminLoginViaW3Up(email, did = null) {
-    logger.info('Requesting login', { email, did });
+/**
+ * Initial login with email + DID
+ * This establishes the w3up account and creates a long-term session
+ */
+export async function requestAdminLoginViaW3Up(email, did) {
+    logger.info('Requesting initial login', { email, did });
+    
+    if (!email || !did) {
+        throw new Error('Both email and DID are required for initial login');
+    }
+
     const client = getClient();
     
     try {
-        // Step 1: Login with email
+        // Step 1: Login with email (this creates the temporary access request)
         const account = await client.login(email);
-        logger.info('Login successful', { accountDid: account.did() });
+        logger.info('Email login successful', { accountDid: account.did() });
         
         // Step 2: Wait for payment plan if needed
         try {
             await account.plan.wait();
             logger.info('Payment plan confirmed');
-            
-            // Create DID-email mapping right after payment plan is confirmed
-            if (did) {wdq
-                const db = getDatabase();
-                db.prepare(`
-                    INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
-                    VALUES (?, ?, ?)
-                `).run(did, email, Date.now());
-                logger.info('Created DID-email mapping', { did, email });
-            }
         } catch (e) {
             logger.debug('No payment plan required or already set');
         }
 
-        // Step 3: Check if we have spaces
+        // Step 3: Store the DID-email mapping immediately
+        const db = getDatabase();
+        db.prepare(`
+            INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
+            VALUES (?, ?, ?)
+        `).run(did, email, Date.now());
+        logger.info('Created DID-email mapping', { did, email });
+
+        // Step 4: Check if we have spaces
         const spaces = client.spaces();
         let space;
         let spacesList = [];
@@ -109,18 +116,18 @@ export async function requestAdminLoginViaW3Up(email, did = null) {
             logger.debug('Using existing space', { spaceDid: space.did() });
         }
 
-        // Cache the spaces immediately
+        // Step 5: Cache the spaces immediately
         storeCachedSpaces(email, spacesList);
         logger.info('Cached spaces', { 
             count: spacesList.length,
             spaceNames: spacesList.map(s => s.name)
         });
 
-        // Step 4: Set current space
+        // Step 6: Set current space
         await client.setCurrentSpace(space.did());
         logger.debug('Set current space', { spaceDid: space.did() });
         
-        // Step 5: Store admin data and create session
+        // Step 7: Store admin data and create session using the provided DID
         const adminDid = client.agent.did();
         const authResult = await handleAdminW3UpAuthorization(email, adminDid, client, did);
         
@@ -129,12 +136,102 @@ export async function requestAdminLoginViaW3Up(email, did = null) {
         }
         
         return { 
-            message: 'Login successful',
+            message: 'Initial login successful',
             sessionId: authResult.sessionId,
-            did: did || null
+            did: did,
+            spaces: spacesList
         };
     } catch (error) {
-        logger.error('Login failed', { error: error.message });
+        logger.error('Initial login failed', { error: error.message });
+        throw error;
+    }
+}
+
+/**
+ * Subsequent login with email + DID
+ * This validates the DID and creates a new session without re-authenticating with w3up
+ */
+export async function handleSubsequentLogin(email, did) {
+    logger.info('Handling subsequent login', { email, did });
+    
+    if (!email || !did) {
+        throw new Error('Both email and DID are required for login');
+    }
+
+    try {
+        // Verify the DID exists in our system
+        const db = getDatabase();
+        const mapping = db.prepare(`
+            SELECT email FROM did_email_mapping 
+            WHERE did = ? AND email = ?
+        `).get(did, email);
+
+        if (!mapping) {
+            throw new Error('No account found for this DID and email combination. Please complete initial login first.');
+        }
+
+        // Check if there's an active session for this email
+        const activeSession = db.prepare(`
+            SELECT sessionId FROM active_account_sessions 
+            WHERE email = ? 
+            ORDER BY createdAt DESC LIMIT 1
+        `).get(email);
+
+        if (activeSession) {
+            // Reuse existing session
+            logger.info('Reusing existing session for subsequent login', { did, email });
+            return {
+                message: 'Subsequent login successful',
+                sessionId: activeSession.sessionId,
+                did: did
+            };
+        }
+
+        // Create a new session for this DID
+        const { sessionId } = createSession(email, did);
+        logger.info('Created new session for subsequent login', { did, email });
+        
+        return {
+            message: 'Subsequent login successful',
+            sessionId,
+            did: did
+        };
+
+    } catch (error) {
+        logger.error('Subsequent login failed', { did, email, error: error.message });
+        throw error;
+    }
+}
+
+/**
+ * Unified login function that handles both initial and subsequent logins
+ */
+export async function handleAdminLogin(email, did) {
+    logger.info('Handling admin login', { email, did });
+    
+    if (!email || !did) {
+        throw new Error('Both email and DID are required for login');
+    }
+
+    try {
+        // Check if this is an initial login (no DID-email mapping exists)
+        const db = getDatabase();
+        const existingMapping = db.prepare(`
+            SELECT email FROM did_email_mapping 
+            WHERE did = ? AND email = ?
+        `).get(did, email);
+
+        if (!existingMapping) {
+            // This is an initial login - need to authenticate with w3up
+            logger.info('Performing initial login with w3up', { email, did });
+            return await requestAdminLoginViaW3Up(email, did);
+        } else {
+            // This is a subsequent login - just validate and create session
+            logger.info('Performing subsequent login', { email, did });
+            return await handleSubsequentLogin(email, did);
+        }
+    } catch (error) {
+        logger.error('Admin login failed', { email, did, error: error.message });
         throw error;
     }
 }
@@ -164,50 +261,8 @@ export async function logoutFromW3Up() {
     }
 }
 
-// Modify handleDidLogin to only handle subsequent logins
+// Keep the old function for backward compatibility, but mark as deprecated
 export async function handleDidLogin(did) {
-    logger.info('Handling DID login', { did });
-    const client = getClient();
-
-    try {
-        // Verify the DID exists in our system
-        const db = getDatabase();
-        const mapping = db.prepare(`
-            SELECT email FROM did_email_mapping 
-            WHERE did = ?
-        `).get(did);
-
-        if (!mapping) {
-            throw new Error('No account found for this DID. Please login with email first.');
-        }
-
-        // Check if there's an active session for this email
-        const activeSession = db.prepare(`
-            SELECT sessionId FROM active_account_sessions 
-            WHERE email = ? 
-            ORDER BY createdAt DESC LIMIT 1
-        `).get(mapping.email);
-
-        if (activeSession) {
-            // Reuse existing session
-            logger.info('Reusing existing session for DID login', { did, email: mapping.email });
-            return {
-                message: 'DID login successful',
-                sessionId: activeSession.sessionId
-            };
-        }
-
-        // Create a new session for this DID
-        const { sessionId } = createSession(mapping.email, did);
-        logger.info('Created new session for DID login', { did, email: mapping.email });
-        
-        return {
-            message: 'DID login successful',
-            sessionId
-        };
-
-    } catch (error) {
-        logger.error('DID login failed', { did, error: error.message });
-        throw error;
-    }
+    logger.warn('handleDidLogin is deprecated. Use handleAdminLogin with email + DID instead.');
+    throw new Error('Please use handleAdminLogin with both email and DID for security');
 } 
