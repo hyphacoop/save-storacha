@@ -141,7 +141,7 @@ The server runs on port 3000 by default. Set the `PORT` environment variable to 
 
 ## Dependencies
 
-- `@web3-storage/w3up-client` - Web3.Storage client for w3up protocol
+- `@web3-storage/w3up-client` - Storacha client for w3up protocol
 - `@ipld/car` - Content Addressable aRchive handling
 - `@ucanto/core` - UCAN protocol implementation
 - `express` - Web server framework
