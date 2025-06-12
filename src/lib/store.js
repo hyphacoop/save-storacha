@@ -483,11 +483,12 @@ export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar,
     // Store in database
     try {
         const db = getDatabase();
+        const now = Date.now();
         db.prepare(`
             INSERT OR REPLACE INTO delegations 
-            (userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, createdAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, Date.now());
+            (userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, now, now);
         
         logger.debug('Delegation stored in database', { 
             userDid, 
@@ -789,6 +790,78 @@ export function revokeDelegation(userDid, spaceDid, delegationCid) {
             userDid, 
             spaceDid, 
             delegationCid, 
+            error: error.message 
+        });
+        return false;
+    }
+}
+
+/**
+ * Admin Space Management
+ * Tracks which spaces belong to which admins for proper isolation
+ */
+
+export function storeAdminSpace(adminEmail, spaceDid, spaceName = null) {
+    try {
+        const db = getDatabase();
+        const now = Date.now();
+        
+        db.prepare(`
+            INSERT OR REPLACE INTO admin_spaces 
+            (adminEmail, spaceDid, spaceName, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(adminEmail, spaceDid, spaceName, now, now);
+        
+        logger.info('Stored admin space', { 
+            adminEmail, 
+            spaceDid, 
+            spaceName 
+        });
+    } catch (error) {
+        logger.error('Failed to store admin space', { 
+            adminEmail, 
+            spaceDid, 
+            error: error.message 
+        });
+    }
+}
+
+export function getAdminSpaces(adminEmail) {
+    try {
+        const db = getDatabase();
+        const spaces = db.prepare(`
+            SELECT spaceDid, spaceName, createdAt 
+            FROM admin_spaces 
+            WHERE adminEmail = ? 
+            ORDER BY createdAt DESC
+        `).all(adminEmail);
+        
+        return spaces.map(space => ({
+            did: space.spaceDid,
+            name: space.spaceName || space.spaceDid
+        }));
+    } catch (error) {
+        logger.error('Failed to get admin spaces', { 
+            adminEmail, 
+            error: error.message 
+        });
+        return [];
+    }
+}
+
+export function isAdminSpaceOwner(adminEmail, spaceDid) {
+    try {
+        const db = getDatabase();
+        const space = db.prepare(`
+            SELECT id FROM admin_spaces 
+            WHERE adminEmail = ? AND spaceDid = ?
+        `).get(adminEmail, spaceDid);
+        
+        return !!space;
+    } catch (error) {
+        logger.error('Failed to check admin space ownership', { 
+            adminEmail, 
+            spaceDid, 
             error: error.message 
         });
         return false;

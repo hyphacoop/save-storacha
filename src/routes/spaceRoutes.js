@@ -1,3 +1,23 @@
+/**
+ * Space Management Routes Module
+ * 
+ * This module handles all space-related endpoints for the Storacha delegation
+ * management system. Spaces represent storage containers where files can be uploaded
+ * and managed within the Storacha ecosystem.
+ * 
+ * Key Features:
+ * - Space listing with admin isolation
+ * - Individual space usage reporting  
+ * - Account-wide usage aggregation
+ * - Multi-admin client support with fallback
+ * - Detailed usage metrics (bytes, MB, human-readable)
+ * 
+ * Security Features:
+ * - Admin authentication required for all endpoints
+ * - Space access limited to assigned spaces only
+ * - Proper error handling for unauthorized access
+ */
+
 import express from 'express';
 import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
@@ -6,7 +26,25 @@ import { getClient, getAdminClient } from '../lib/w3upClient.js';
 
 const router = express.Router();
 
-// GET /spaces - lists spaces for the authenticated admin
+/**
+ * GET /spaces - List spaces available to authenticated admin
+ * 
+ * Returns all spaces that have been explicitly assigned to the authenticated
+ * admin user. This ensures proper space isolation between different admin
+ * accounts in multi-tenant scenarios.
+ * 
+ * The response includes space DIDs and names for client-side management.
+ * 
+ * Authentication: Required via session ID header
+ * 
+ * Response format:
+ * [
+ *   {
+ *     "did": "did:key:...",
+ *     "name": "space-name"
+ *   }
+ * ]
+ */
 router.get('/', ensureAuthenticated, async (req, res) => {
     const adminEmail = req.userEmail; // From ensureAuthenticated middleware
     try {
@@ -23,7 +61,33 @@ router.get('/', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// GET /spaces/usage - Get space usage information
+/**
+ * GET /spaces/usage - Get detailed usage information for a specific space
+ * 
+ * Provides comprehensive storage usage metrics for a single space including:
+ * - Raw byte count
+ * - Megabyte conversion
+ * - Human-readable format
+ * 
+ * This endpoint uses the Storacha capability API to fetch real-time
+ * usage data. It supports both admin-specific clients and fallback to
+ * the global client for backward compatibility.
+ * 
+ * Query Parameters:
+ * - spaceDid (required): The DID of the space to check
+ * 
+ * Authentication: Required via session ID header
+ * 
+ * Response format:
+ * {
+ *   "spaceDid": "did:key:...",
+ *   "usage": {
+ *     "bytes": 1048576,
+ *     "mb": 1.0,
+ *     "human": "1.0 MB"
+ *   }
+ * }
+ */
 router.get('/usage', ensureAuthenticated, async (req, res) => {
     const { spaceDid } = req.query;
     const adminEmail = req.userEmail;
@@ -97,7 +161,41 @@ router.get('/usage', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// GET /spaces/account-usage - Get total usage across all spaces for an admin
+/**
+ * GET /spaces/account-usage - Get aggregated usage across all admin spaces
+ * 
+ * Provides a comprehensive view of storage usage across all spaces assigned
+ * to the authenticated admin. This is useful for:
+ * - Account-level usage monitoring
+ * - Billing and quota management
+ * - Storage optimization decisions
+ * 
+ * The endpoint fetches usage for each space individually and aggregates
+ * the results. If any individual space fails, it continues with others
+ * and reports the error in the response.
+ * 
+ * Authentication: Required via session ID header
+ * 
+ * Response format:
+ * {
+ *   "totalUsage": {
+ *     "bytes": 2097152,
+ *     "mb": 2.0,
+ *     "human": "2.0 MB"
+ *   },
+ *   "spaces": [
+ *     {
+ *       "spaceDid": "did:key:...",
+ *       "name": "space-name",
+ *       "usage": {
+ *         "bytes": 1048576,
+ *         "mb": 1.0,
+ *         "human": "1.0 MB"
+ *       }
+ *     }
+ *   ]
+ * }
+ */
 router.get('/account-usage', ensureAuthenticated, async (req, res) => {
     const adminEmail = req.userEmail;
 

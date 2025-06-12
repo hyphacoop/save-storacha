@@ -1,3 +1,24 @@
+/**
+ * Authentication Routes Module
+ * 
+ * This module handles all authentication-related endpoints for the Storacha
+ * delegation management system. It provides secure login/logout functionality
+ * with session management and DID-based authentication.
+ * 
+ * Key Features:
+ * - DID-based authentication for Web3 identity
+ * - Session management with configurable expiration
+ * - Unified login handling for both initial and subsequent logins
+ * - Multi-session support with individual session control
+ * - Comprehensive session listing and management
+ * 
+ * Security Features:
+ * - Session validation middleware
+ * - Proper session isolation between users
+ * - Secure session deactivation
+ * - Email-DID binding validation
+ */
+
 import express from 'express';
 import * as AuthService from '../services/authService.js';
 import { 
@@ -11,8 +32,20 @@ import { logger } from '../lib/logger.js';
 
 const router = express.Router();
 
-// Middleware to check for an active session
-// This will be used by other (non-auth) routes that require an authenticated admin
+/**
+ * Authentication middleware for protected routes
+ * 
+ * This middleware validates that incoming requests have a valid session ID
+ * and that the session is still active. It extracts both email and DID
+ * from the session and attaches them to the request object for use by
+ * subsequent route handlers.
+ * 
+ * Used by all routes that require an authenticated admin user.
+ * 
+ * @param {object} req - Express request object
+ * @param {object} res - Express response object  
+ * @param {function} next - Express next middleware function
+ */
 export const ensureAuthenticated = (req, res, next) => {
     const sessionId = req.headers['x-session-id']; 
     if (!sessionId) {
@@ -28,7 +61,13 @@ export const ensureAuthenticated = (req, res, next) => {
     next();
 };
 
-// POST /auth/login/did - Login with DID (first time or subsequent)
+/**
+ * POST /auth/login/did - Legacy DID-only login endpoint
+ * 
+ * This endpoint is deprecated and maintained only for backward compatibility.
+ * New implementations should use the unified /auth/login endpoint that requires
+ * both email and DID for enhanced security.
+ */
 router.post('/login/did', async (req, res) => {
     try {
         const { did } = req.body;
@@ -44,7 +83,26 @@ router.post('/login/did', async (req, res) => {
     }
 });
 
-// POST /auth/login - Unified login endpoint (email + DID required)
+/**
+ * POST /auth/login - Unified login endpoint (requires email + DID)
+ * 
+ * This is the primary authentication endpoint that handles both initial and
+ * subsequent logins. It requires both email and DID parameters for enhanced
+ * security and proper user identification.
+ * 
+ * The endpoint automatically determines whether this is an initial login
+ * (requiring Storacha authentication) or a subsequent login (using
+ * cached credentials).
+ * 
+ * Request body:
+ * - email: User's email address
+ * - did: User's decentralized identifier
+ * 
+ * Response:
+ * - sessionId: Session identifier for subsequent requests
+ * - did: Confirmed DID
+ * - spaces: Available spaces for the user
+ */
 router.post('/login', async (req, res) => {
     try {
         const { email, did } = req.body;
@@ -63,7 +121,15 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// POST /auth/login/email - Initiates w3up email validation (deprecated, use /login instead)
+/**
+ * POST /auth/login/email - Email-based login initialization (deprecated)
+ * 
+ * This endpoint initiates the Storacha email validation process.
+ * It's deprecated in favor of the unified /auth/login endpoint but
+ * maintained for backward compatibility.
+ * 
+ * New integrations should use /auth/login instead.
+ */
 router.post('/login/email', async (req, res) => {
     try {
         const { email, did } = req.body;
@@ -82,7 +148,17 @@ router.post('/login/email', async (req, res) => {
     }
 });
 
-// GET /auth/session - A simple endpoint to check if a session is valid and get expiry
+/**
+ * GET /auth/session - Session validation endpoint
+ * 
+ * Provides a simple way for clients to check if their session is still valid
+ * and get information about session expiration. This is useful for:
+ * - Client-side session management
+ * - Proactive session renewal
+ * - UI state management
+ * 
+ * Returns session validity status and expiration time if valid.
+ */
 router.get('/session', (req, res) => {
     const sessionId = req.headers['x-session-id'];
     if (!sessionId) {
@@ -101,26 +177,53 @@ router.get('/session', (req, res) => {
     });
 });
 
-// POST /auth/logout - Clears the session
+/**
+ * POST /auth/logout - Session termination endpoint
+ * 
+ * Securely terminates the current session, removing it from both memory
+ * and persistent storage. This should be called when users explicitly
+ * log out or when implementing session cleanup.
+ * 
+ * Requires authentication via session ID header.
+ */
 router.post('/logout', ensureAuthenticated, (req, res) => {
     const sessionId = req.headers['x-session-id'];
-    clearStoreSession(sessionId); // Use the imported clearSession from store.js
+    clearStoreSession(sessionId);
     res.json({ message: 'Logout successful' });
 });
 
-// POST /auth/w3up/logout - Attempts to logout from w3up service
+/**
+ * POST /auth/w3up/logout - Storacha service logout
+ * 
+ * Attempts to logout from the Storacha service directly, removing
+ * any cached account information. This is separate from local session
+ * management and affects the underlying Storacha client state.
+ * 
+ * Use this for complete cleanup of Storacha authentication state.
+ */
 router.post('/w3up/logout', async (req, res) => {
-    logger.info('W3UP logout request received');
+    logger.info('Storacha logout request received');
     try {
         const result = await AuthService.logoutFromW3Up();
         res.json(result);
     } catch (error) {
-        logger.error('W3UP logout failed', { error: error.message });
+        logger.error('Storacha logout failed', { error: error.message });
         res.status(500).json({ message: error.message || 'Logout failed' });
     }
 });
 
-// GET /auth/sessions - List all sessions for the authenticated user
+/**
+ * GET /auth/sessions - List all sessions for authenticated user
+ * 
+ * Provides comprehensive session management by listing all active and
+ * inactive sessions for the authenticated user. This enables:
+ * - Security auditing (see where you're logged in)
+ * - Multi-device session management
+ * - Suspicious activity detection
+ * 
+ * Returns detailed session information including creation time, last activity,
+ * expiration, and browser/device information.
+ */
 router.get('/sessions', ensureAuthenticated, (req, res) => {
     try {
         const sessions = getAccountSessions(req.userEmail);
@@ -147,7 +250,17 @@ router.get('/sessions', ensureAuthenticated, (req, res) => {
     }
 });
 
-// POST /auth/sessions/:sessionId/deactivate - Deactivate a specific session
+/**
+ * POST /auth/sessions/:sessionId/deactivate - Deactivate specific session
+ * 
+ * Allows users to deactivate a specific session, useful for:
+ * - Logging out from a specific device
+ * - Revoking access from a lost/stolen device  
+ * - Managing session security
+ * 
+ * Includes authorization check to ensure users can only deactivate
+ * their own sessions.
+ */
 router.post('/sessions/:sessionId/deactivate', ensureAuthenticated, (req, res) => {
     const { sessionId } = req.params;
     const session = getSession(sessionId);
@@ -156,6 +269,7 @@ router.post('/sessions/:sessionId/deactivate', ensureAuthenticated, (req, res) =
         return res.status(404).json({ message: 'Session not found' });
     }
     
+    // Ensure users can only deactivate their own sessions
     if (session.email !== req.userEmail) {
         return res.status(403).json({ message: 'Not authorized to deactivate this session' });
     }
@@ -164,7 +278,17 @@ router.post('/sessions/:sessionId/deactivate', ensureAuthenticated, (req, res) =
     res.json({ message: 'Session deactivated successfully' });
 });
 
-// POST /auth/sessions/deactivate-all - Deactivate all sessions for the user
+/**
+ * POST /auth/sessions/deactivate-all - Deactivate all user sessions
+ * 
+ * Provides a "logout everywhere" functionality that deactivates all
+ * sessions for the authenticated user. This is useful for:
+ * - Security incidents (compromise suspected)
+ * - Password changes
+ * - Complete session reset
+ * 
+ * Returns the count of deactivated sessions for confirmation.
+ */
 router.post('/sessions/deactivate-all', ensureAuthenticated, (req, res) => {
     const count = deactivateAccountSessions(req.userEmail);
     res.json({ 
@@ -172,7 +296,5 @@ router.post('/sessions/deactivate-all', ensureAuthenticated, (req, res) => {
         deactivatedCount: count
     });
 });
-
-// Removed /confirm_login and /delegations routes as they are no longer used in the new flow.
 
 export default router; 

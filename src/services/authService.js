@@ -2,7 +2,9 @@ import { getClient } from '../lib/w3upClient.js';
 import {
     createSession,
     storeAdminServiceDidData,
-    storeCachedSpaces
+    storeCachedSpaces,
+    storeAdminSpace,
+    getAdminSpaces
 } from '../lib/store.js';
 import * as Signer from '@ucanto/principal/ed25519';
 import { CarWriter } from '@ipld/car';
@@ -10,7 +12,11 @@ import { base64 } from "multiformats/bases/base64";
 import { logger } from '../lib/logger.js';
 import { getDatabase } from '../lib/db.js';
 
-// This function will be called after successful w3up email confirmation
+/**
+ * Handles the authorization setup after successful Storacha email confirmation
+ * This function configures the admin's access to their assigned spaces and creates a session.
+ * It ensures that each admin only has access to spaces that have been explicitly associated with their account.
+ */
 export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client, providedDid = null) {
     logger.info('Setting up authorization', { adminEmail });
     if (!client) {
@@ -23,21 +29,34 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
         const adminAccount = client.agent;
         logger.debug('Using admin account directly (no service DID)');
 
-        // Extract and log spaces directly from admin account
-        const spaces = [];
-        for (const space of client.spaces()) {
-            spaces.push({
-                name: space.name || space.did(),
-                did: space.did()
+        // Only return spaces that have been explicitly associated with this admin's email
+        // This maintains proper space isolation between different admin accounts
+        const existingSpaces = getAdminSpaces(adminEmail);
+        let spaces = [];
+        
+        if (existingSpaces.length > 0) {
+            // Admin already has spaces associated - use those
+            spaces = existingSpaces.map(space => ({
+                name: space.spaceName,
+                did: space.spaceDid
+            }));
+            logger.info('Using existing spaces for admin', { 
+                adminEmail, 
+                spaceCount: spaces.length 
             });
+        } else {
+            // No spaces associated with this admin yet
+            // This should not happen in normal flow, but handle gracefully
+            logger.warn('No spaces found for admin in database', { adminEmail });
+            spaces = [];
         }
         
         // Cache the spaces
         if (spaces.length > 0) {
             storeCachedSpaces(adminEmail, spaces);
-            logger.info('Found spaces', { 
+            logger.info('Found and stored spaces for admin', { 
                 count: spaces.length,
-                spaceNames: spaces.slice(0, 3).map(s => s.name)
+                spaceNames: spaces.map(s => s.name)
             });
         }
 
@@ -51,14 +70,14 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
         return { sessionId };
 
     } catch (error) {
-        logger.error('Authorization failed', { error: error.message });
-        return { error: error.message };
+        logger.error('Authorization failed', { adminEmail, error: error.message });
+        throw error;
     }
 }
 
 /**
  * Initial login with email + DID
- * This establishes the w3up account and creates a long-term session
+ * This establishes the Storacha account and creates a long-term session
  */
 export async function requestAdminLoginViaW3Up(email, did) {
     logger.info('Requesting initial login', { email, did });
@@ -105,15 +124,39 @@ export async function requestAdminLoginViaW3Up(email, did) {
                 did: space.did(),
                 name: spaceName
             });
+            
+            // Store the newly created space as belonging to this admin
+            // This ensures proper ownership tracking for the new space
+            storeAdminSpace(email, space.did(), spaceName);
         } else {
-            // Use existing spaces and try to get their names
-            logger.info('Found existing spaces', { count: spaces.length });
-            spacesList = spaces.map(s => ({
-                did: s.did(),
-                name: s.name || s.did()
-            }));
-            space = spaces[0];
-            logger.debug('Using existing space', { spaceDid: space.did() });
+            // Handle existing spaces by checking admin association
+            // For initial login, we need to determine which space belongs to this admin
+            const existingAdminSpaces = getAdminSpaces(email);
+            
+            if (existingAdminSpaces.length > 0) {
+                // Admin already has spaces associated (shouldn't happen in initial login, but handle it)
+                logger.info('Admin already has spaces in database during initial login', { 
+                    email, 
+                    spaceCount: existingAdminSpaces.length 
+                });
+                spacesList = existingAdminSpaces.map(adminSpace => ({
+                    did: adminSpace.spaceDid,
+                    name: adminSpace.spaceName
+                }));
+                space = spaces.find(s => s.did() === existingAdminSpaces[0].spaceDid);
+            } else {
+                // This is truly an initial login - we need to associate a space with this admin
+                // For proper isolation, we should not automatically assign any space
+                // Instead, the admin should explicitly choose which space to use
+                logger.warn('Initial login with existing spaces but no admin association', { 
+                    email, 
+                    availableSpaces: spaces.length 
+                });
+                
+                // For now, don't automatically assign any space - require explicit association
+                // This prevents accidentally giving access to wrong spaces
+                throw new Error('Account has existing spaces but no space is associated with this admin. Please contact support to associate a space with your account.');
+            }
         }
 
         // Step 5: Cache the spaces immediately
@@ -187,6 +230,17 @@ export async function handleSubsequentLogin(email, did) {
             };
         }
 
+        // Load spaces that have been assigned to this admin from the database
+        // This ensures that admins only see spaces they have explicit access to
+        const adminSpaces = getAdminSpaces(email);
+        logger.info('Loaded admin spaces for subsequent login', { 
+            email, 
+            spaceCount: adminSpaces.length 
+        });
+
+        // Store admin data for subsequent login (simplified - no w3up re-auth needed)
+        storeAdminServiceDidData(email, did, null, null);
+        
         // Create a new session for this DID
         const { sessionId } = createSession(email, did);
         logger.info('Created new session for subsequent login', { did, email });
@@ -194,7 +248,8 @@ export async function handleSubsequentLogin(email, did) {
         return {
             message: 'Subsequent login successful',
             sessionId,
-            did: did
+            did: did,
+            spaces: adminSpaces
         };
 
     } catch (error) {
@@ -222,8 +277,8 @@ export async function handleAdminLogin(email, did) {
         `).get(did, email);
 
         if (!existingMapping) {
-            // This is an initial login - need to authenticate with w3up
-            logger.info('Performing initial login with w3up', { email, did });
+            // This is an initial login - need to authenticate with Storacha
+            logger.info('Performing initial login with Storacha', { email, did });
             return await requestAdminLoginViaW3Up(email, did);
         } else {
             // This is a subsequent login - just validate and create session
@@ -236,8 +291,17 @@ export async function handleAdminLogin(email, did) {
     }
 }
 
+/**
+ * POST /auth/w3up/logout - Storacha service logout
+ * 
+ * Attempts to logout from the Storacha service directly, removing
+ * any cached account information. This is separate from local session
+ * management and affects the underlying Storacha client state.
+ * 
+ * Use this for complete cleanup of Storacha authentication state.
+ */
 export async function logoutFromW3Up() {
-    logger.info('Attempting to logout from w3up service');
+    logger.info('Attempting to logout from Storacha service');
     try {
         const client = getClient();
         const accounts = client.accounts();
@@ -256,7 +320,7 @@ export async function logoutFromW3Up() {
         
         return { message: 'Logout successful' };
     } catch (error) {
-        logger.error('Error during w3up logout', { error: error.message });
+        logger.error('Error during Storacha logout', { error: error.message });
         throw error;
     }
 }

@@ -1,16 +1,16 @@
 /**
- * Web3.Storage Client Management Module
+ * Storacha Client Management Module
  * 
- * This module manages the Web3.Storage client lifecycle and state for the application.
+ * This module manages the Storacha client lifecycle and state for the application.
  * It provides a singleton client instance that handles:
  * 
  * 1. Client Initialization
- *    - Creates and configures the Web3.Storage client
+ *    - Creates and configures the Storacha client
  *    - Loads existing proofs from disk
  *    - Manages client state across server restarts
  * 
  * 2. Storage Operations
- *    - Handles file uploads to Web3.Storage
+ *    - Handles file uploads to Storacha
  *    - Manages space access and permissions
  *    - Tracks storage usage and limits
  * 
@@ -91,7 +91,7 @@ export function clearClientState() {
 }
 
 /**
- * Initializes the Web3.Storage client
+ * Initializes the Storacha client
  * 
  * This function:
  * 1. Clears any existing client state
