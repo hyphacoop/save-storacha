@@ -2,7 +2,7 @@ import express from 'express';
 import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
 import { logger } from '../lib/logger.js';
-import { getClient } from '../lib/w3upClient.js';
+import { getClient, getAdminClient } from '../lib/w3upClient.js';
 
 const router = express.Router();
 
@@ -36,7 +36,17 @@ router.get('/usage', ensureAuthenticated, async (req, res) => {
 
     try {
         logger.info('Space usage request received', { adminEmail, spaceDid });
-        const client = getClient();
+        
+        // Use admin-specific client for multi-admin support
+        let client;
+        try {
+            client = await getAdminClient(adminEmail);
+            logger.info('Using admin-specific client for space usage', { adminEmail });
+        } catch (error) {
+            // Fallback to global client for backward compatibility
+            client = getClient();
+            logger.info('Using global client for space usage (fallback)', { adminEmail });
+        }
         
         // Try to get the space from loaded spaces
         let spaces = client.spaces();
@@ -93,7 +103,17 @@ router.get('/account-usage', ensureAuthenticated, async (req, res) => {
 
     try {
         logger.info('Account usage request received', { adminEmail });
-        const client = getClient();
+        
+        // Use admin-specific client for multi-admin support
+        let client;
+        try {
+            client = await getAdminClient(adminEmail);
+            logger.info('Using admin-specific client for account usage', { adminEmail });
+        } catch (error) {
+            // Fallback to global client for backward compatibility
+            client = getClient();
+            logger.info('Using global client for account usage (fallback)', { adminEmail });
+        }
         
         // Get all spaces for the admin
         const spaces = await SpaceService.getSpaces(adminEmail);
