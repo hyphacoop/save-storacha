@@ -1,0 +1,36 @@
+# Logs
+server.log
+*.log
+logs/
+npm-debug.log*
+
+# Sensitive data
+cookies.txt
+.env
+.env.*
+*.pem
+*.key
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db 
