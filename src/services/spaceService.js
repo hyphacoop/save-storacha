@@ -6,7 +6,7 @@ import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
 import * as Signer from '@ucanto/principal/ed25519'; // For parsing the principal string
 import { DID } from '@ucanto/validator'; // For parsing the principal string to a Signer
-import { getClient } from '../lib/w3upClient.js';
+import { getClient, getAdminClient } from '../lib/w3upClient.js';
 
 export async function getSpaces(adminEmail) {
     if (!adminEmail) {
@@ -26,8 +26,18 @@ export async function getSpaces(adminEmail) {
             return cachedSpaces;
         }
 
-        // If no cache, get spaces from client
-        const client = getClient();
+        // Use admin-specific client for multi-admin support
+        let client;
+        try {
+            // Try to get admin-specific client first
+            client = await getAdminClient(adminEmail);
+            console.log(`Using admin-specific client for ${adminEmail}`);
+        } catch (error) {
+            // Fallback to global client for backward compatibility
+            client = getClient();
+            console.log(`Using global client for ${adminEmail} (fallback)`);
+        }
+
         const spaces = client.spaces();
         console.log(`Found ${spaces.length} spaces for ${adminEmail}`);
         
