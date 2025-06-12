@@ -16,7 +16,7 @@ import rateLimit from 'express-rate-limit';
 import { sha256 } from '@ucanto/core';
 import { ed25519 } from '@ucanto/principal';
 import { CarWriter } from '@ipld/car/writer';
-import { getClient } from '../lib/w3upClient.js';
+import { getClient, getAdminClient } from '../lib/w3upClient.js';
 import { generateAuthHeaders } from '../lib/token-generation.js';
 import { logger } from '../lib/logger.js';
 
@@ -106,13 +106,33 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
         console.log('Delegation object:', delegation);
         console.log('Using delegation:', delegation.delegationCid && delegation.delegationCid.toString());
 
+        // Check if delegation has admin information for multi-admin support
+        if (!delegation.createdBy) {
+            console.log('Warning: Delegation missing admin information, using global client');
+        }
+
         // Initialize tempFilePath outside try block
         let tempFilePath = null;
         let importedDelegation = null;
 
         try {
-            // Use the admin client instead of creating a new client with user's principal
-            const uploadClient = getClient();
+            // Use admin-specific client if available, otherwise fall back to global client
+            let uploadClient;
+            if (delegation.createdBy) {
+                try {
+                    // Use the admin who created the delegation
+                    uploadClient = await getAdminClient(delegation.createdBy);
+                    console.log('Using admin-specific client for upload');
+                    console.log('Delegation created by admin:', delegation.createdBy);
+                } catch (error) {
+                    console.log('Failed to get admin client, falling back to global client:', error.message);
+                    uploadClient = getClient();
+                }
+            } else {
+                uploadClient = getClient();
+                console.log('Using global client for upload (no admin tracking)');
+            }
+            
             if (!uploadClient) {
                 throw new Error('w3up client not initialized');
             }
@@ -247,6 +267,165 @@ router.get('/bridge-tokens', async (req, res) => {
         logger.error('[bridge-tokens] Bridge token generation failed:', error);
         res.status(error.message.includes('No principal found') ? 403 : 500)
            .json({ error: error.message });
+    }
+});
+
+// GET /uploads - List uploads for a user in a specific space
+router.get('/uploads', async (req, res) => {
+    try {
+        const userDid = req.headers['x-user-did'];
+        const spaceDid = req.query.spaceDid;
+
+        if (!userDid || !spaceDid) {
+            return res.status(400).json({ error: 'Missing userDid or spaceDid' });
+        }
+
+        console.log('Upload list request received:', {
+            userDid,
+            spaceDid
+        });
+
+        // Get delegations for the user
+        const delegations = await getDelegationsForUser(userDid);
+        console.log('Found delegations:', delegations ? delegations.length : 0);
+        if (!delegations || delegations.length === 0) {
+            console.log('No valid delegations found for user:', userDid);
+            return res.status(403).json({ error: 'No valid delegation found', userDid });
+        }
+
+        // Filter delegations for the specific space
+        const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
+        console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
+        if (spaceDelegations.length === 0) {
+            console.log('No valid delegations found for user and space:', { userDid, spaceDid });
+            return res.status(403).json({ 
+                error: 'No valid delegation found for this space',
+                userDid,
+                spaceDid,
+                availableSpaces: delegations.map(d => d.spaceDid)
+            });
+        }
+
+        // Use the first valid delegation
+        const delegation = spaceDelegations[0];
+        console.log('Delegation object:', delegation);
+
+        // Initialize variables
+        let importedDelegation = null;
+
+        try {
+            // Use admin-specific client if available, otherwise fall back to global client
+            let listClient;
+            if (delegation.createdBy) {
+                try {
+                    // Use the admin who created the delegation
+                    listClient = await getAdminClient(delegation.createdBy);
+                    console.log('Using admin-specific client for upload listing');
+                    console.log('Delegation created by admin:', delegation.createdBy);
+                } catch (error) {
+                    console.log('Failed to get admin client, falling back to global client:', error.message);
+                    listClient = getClient();
+                }
+            } else {
+                listClient = getClient();
+                console.log('Using global client for upload listing (no admin tracking)');
+            }
+            
+            if (!listClient) {
+                throw new Error('w3up client not initialized');
+            }
+            console.log('Using client for upload listing with DID:', listClient.did());
+
+            // Import and add the delegation proof
+            try {
+                console.log('Delegation CAR:', delegation.delegationCar.substring(0, 100) + '...');
+                const delegationBytes = base64.decode(delegation.delegationCar);
+                console.log('Decoded delegation bytes length:', delegationBytes.length);
+                const carReader = await CarReader.fromBytes(delegationBytes);
+                console.log('Created CAR reader');
+
+                // Get all blocks from the CAR file
+                const blocks = [];
+                const iterator = carReader.blocks();
+                for await (const block of iterator) {
+                    blocks.push(block);
+                }
+                console.log('Collected blocks from CAR:', blocks.length);
+
+                // Import the delegation using the blocks
+                importedDelegation = await importDAG(blocks);
+                if (!importedDelegation) {
+                    throw new Error('Failed to import delegation: importDAG returned null');
+                }
+                await listClient.addProof(importedDelegation);
+                console.log('Added delegation proof to list client');
+            } catch (error) {
+                console.error('Failed to import delegation:', error);
+                throw new Error('Failed to import delegation: ' + error.message);
+            }
+
+            if (!importedDelegation) {
+                throw new Error('Delegation import failed - no delegation available');
+            }
+
+            // Add and set the space
+            const space = await listClient.addSpace(importedDelegation);
+            await listClient.setCurrentSpace(space.did());
+            console.log('Set current space for listing:', space.did());
+
+            // List uploads using the w3up client
+            console.log('Listing uploads...');
+            
+            const uploads = [];
+            let cursor = req.query.cursor; // Support pagination
+            const size = parseInt(req.query.size) || 25; // Default page size
+            
+            try {
+                // Use the capability.upload.list method on the w3up client
+                console.log('Using client.capability.upload.list method with cursor:', cursor, 'size:', size);
+                const result = await listClient.capability.upload.list({ 
+                    cursor: cursor || '', 
+                    size: size 
+                });
+                console.log('List result:', result);
+                
+                if (result && result.uploads) {
+                    for (const upload of result.uploads) {
+                        uploads.push({
+                            cid: upload.root?.toString() || upload.cid?.toString(),
+                            size: upload.size,
+                            created: upload.created,
+                            gatewayUrl: upload.root
+                                ? `https://${upload.root.toString()}.ipfs.w3s.link/`
+                                : `https://${upload.cid?.toString()}.ipfs.w3s.link/`,
+                        });
+                    }
+                }
+                
+                // Return pagination info
+                res.json({
+                    success: true,
+                    userDid,
+                    spaceDid,
+                    uploads,
+                    count: uploads.length,
+                    cursor: result?.cursor, // For next page
+                    hasMore: !!result?.cursor
+                });
+                
+            } catch (error) {
+                console.error('Error listing uploads:', error);
+                throw new Error(`Failed to list uploads: ${error.message}`);
+            }
+            
+        } catch (error) {
+            console.error('Upload listing error:', error);
+            res.status(500).json({ error: error.message });
+        }
+
+    } catch (error) {
+        console.error('Upload listing error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
