@@ -17,7 +17,6 @@ A service for managing secure file uploads to Filecoin using Storacha.
 - **File upload implementation** ✅
     - User delegation system with CAR file handling
     - Secure file uploads to spaces
-    - Temporary file management
     - Delegation chain validation
 
 
