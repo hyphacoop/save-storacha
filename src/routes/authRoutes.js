@@ -6,7 +6,7 @@
  * with session management and DID-based authentication.
  * 
  * Key Features:
- * - DID-based authentication for Web3 identity
+ * - DID-based authentication for decentralized identity
  * - Session management with configurable expiration
  * - Unified login handling for both initial and subsequent logins
  * - Multi-session support with individual session control
