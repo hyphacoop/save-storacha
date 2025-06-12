@@ -54,6 +54,7 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         // Create delegation with minimal capabilities for file uploads
         const abilities = [
             'upload/add',           // Upload capability
+            'upload/list',          // List uploads capability
             'store/*',              // Storage operations
             'space/blob/add',       // Add blobs to space (required for uploads)
             'space/index/add'       // Add to space index (required for uploads)
@@ -92,22 +93,24 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         const delegationCar = Buffer.concat(carChunks);
         const delegationCarString = base64.encode(delegationCar);
 
-        // Store the delegation information with expiry
-        storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime);
+        // Store delegation with admin tracking for multi-admin support
+        await storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime, adminEmail);
 
-        logger.info('Delegation created and stored successfully', { 
+        logger.info('Delegation created successfully', {
             userDid,
             spaceDid,
             principalDid: userPrincipal.did(),
             delegationCid: delegation.cid.toString(),
-            expiresAt: new Date(expirationTime).toISOString()
+            expiresAt: new Date(expirationTime).toISOString(),
+            createdBy: adminEmail // Track which admin created this delegation
         });
 
         res.json({
             message: 'Delegation created successfully',
             principalDid: userPrincipal.did(),
             delegationCid: delegation.cid.toString(),
-            expiresAt: new Date(expirationTime).toISOString()
+            expiresAt: new Date(expirationTime).toISOString(),
+            createdBy: adminEmail
         });
 
     } catch (error) {
@@ -165,6 +168,7 @@ router.post('/create-simple', ensureAuthenticated, async (req, res) => {
             userPrincipal,
             [
                 'upload/add',           // Upload capability
+                'upload/list',          // List uploads capability
                 'store/*',              // Storage operations
                 'space/blob/add',       // Add blobs to space (required for uploads)
                 'space/index/add'       // Add to space index (required for uploads)
@@ -200,21 +204,23 @@ router.post('/create-simple', ensureAuthenticated, async (req, res) => {
         const delegationCarString = base64.encode(delegationCar);
 
         // Store the delegation information
-        storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime);
+        storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime, adminEmail);
 
         logger.info('Simple delegation created successfully', { 
             userDid,
             spaceDid,
             principalDid: userPrincipal.did(),
             delegationCid: delegation.cid.toString(),
-            expiresAt: new Date(expirationTime).toISOString()
+            expiresAt: new Date(expirationTime).toISOString(),
+            createdBy: adminEmail
         });
 
         res.json({
             message: 'Simple delegation created successfully',
             principalDid: userPrincipal.did(),
             delegationCid: delegation.cid.toString(),
-            expiresAt: new Date(expirationTime).toISOString()
+            expiresAt: new Date(expirationTime).toISOString(),
+            createdBy: adminEmail
         });
 
     } catch (error) {
