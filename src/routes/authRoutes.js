@@ -44,12 +44,34 @@ router.post('/login/did', async (req, res) => {
     }
 });
 
-// POST /auth/login/email - Initiates w3up email validation
+// POST /auth/login - Unified login endpoint (email + DID required)
+router.post('/login', async (req, res) => {
+    try {
+        const { email, did } = req.body;
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+        if (!did) {
+            return res.status(400).json({ error: 'DID is required' });
+        }
+
+        const result = await AuthService.handleAdminLogin(email, did);
+        res.json(result);
+    } catch (error) {
+        logger.error('Admin login failed', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST /auth/login/email - Initiates w3up email validation (deprecated, use /login instead)
 router.post('/login/email', async (req, res) => {
     try {
         const { email, did } = req.body;
         if (!email) {
             return res.status(400).json({ error: 'Email is required' });
+        }
+        if (!did) {
+            return res.status(400).json({ error: 'DID is required for security' });
         }
 
         const result = await AuthService.requestAdminLoginViaW3Up(email, did);
