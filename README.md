@@ -17,13 +17,11 @@ A service for managing secure file uploads to Filecoin using Storacha.
 - **File upload implementation** ✅
     - User delegation system with CAR file handling
     - Secure file uploads to spaces
-    - Space usage tracking and monitoring
     - Temporary file management
     - Delegation chain validation
 
 
 ### 🚧 In Progress
-- Upload progress tracking
 - Direct bridge upload support
 - List user uploads
 
@@ -114,11 +112,11 @@ For detailed API documentation including request/response formats, examples, and
 #### Spaces
 - `GET /spaces` - List spaces for authenticated admin
 - `GET /spaces/usage` - Get space usage information
-- `GET /spaces/account-usage` - Get total storage usage across all spaces
+- `GET /spaces/account-usage` - Get total storage usage across all spaces for an admin
 
 #### Upload
-- `POST /upload` - Upload file through token service (recommended)
-- `GET /bridge-tokens` - Get authentication tokens for direct bridge upload
+- `POST /upload` - Upload file through token service
+- `GET /bridge-tokens` - Get authentication tokens for direct bridge upload (WIP)
 - `GET /uploads` - List uploads for a user in a specific space
 
 #### Delegations
@@ -193,15 +191,15 @@ sequenceDiagram
 2. Logs in with email and DID (w3up protocol)
    - First time: Provides both email and DID
    - Subsequent logins: Can use either email+DID or just DID
-3. Imports or creates space
+3. Selects a space
 4. Delegates upload capabilities to users
 
 ### User journey
 1. App generates keypair + DID
 2. User copies DID and sends to admin
-3. Admin delegates permissions
+3. Admin delegates permissions (as seen in admin journey)
 4. User can upload files using:
-   - **Direct bridge upload**: Get auth tokens and upload directly to Storacha
+   - **Direct bridge upload**: Get auth tokens and upload directly to Storacha (WIP)
    - **Token service upload**: Upload through the service with delegation validation
 5. User can:
    - List their accessible spaces using `/delegations/user/spaces`
@@ -211,12 +209,11 @@ sequenceDiagram
 ## Quick Start Example
 
 For a complete step-by-step example of the delegation and upload process, see the [Complete Example section in API.md](./API.md#complete-example-delegation-and-upload).
-
 ## Implementation Details
 
 ### Token Service
 - Express.js backend
-- Session management with 24-hour expiry
+- Session management with 24-hour expiry (final expiry time tbd)
 - Space caching for performance
 - W3up client persistence
 - **Minimal delegation architecture** with principal derivation
@@ -248,8 +245,8 @@ For a complete step-by-step example of the delegation and upload process, see th
 
 #### 4. Direct Bridge Upload
 - Generates authentication headers for direct Storacha uploads
-- Uses delegation CAR directly as Authorization header
-- Provides curl commands for easy testing
+- Uses delegation CAR directly as Authorization header (needs more work)
+- Provides curl commands for easy testing (might change the endpoint response based on tests)
 - Supports both upload methods seamlessly
 
 ### Storage Bridge (Implemented)
@@ -272,3 +269,4 @@ For a complete step-by-step example of the delegation and upload process, see th
 - Upload interface (both methods)
 - Upload status tracking
 - Storage quota display
+
