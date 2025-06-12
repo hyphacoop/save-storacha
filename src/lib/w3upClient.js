@@ -21,6 +21,9 @@
  * 
  * The module uses a local filesystem store to persist client state
  * between server restarts, ensuring continuity of operations.
+ * 
+ * IMPORTANT: This module now uses DID-based authentication to avoid
+ * access request expiration issues with email-based login.
  */
 
 import { create, Client } from '@web3-storage/w3up-client'
@@ -34,6 +37,9 @@ import { logger } from './logger.js'
 let client = null
 /** @type {string | null} */
 let serverDid = null
+
+// Multi-admin support: Map of admin email to their client
+const adminClients = new Map(); // adminEmail -> Client
 
 const storePath = path.join(process.cwd(), 'w3up-client-data')
 
@@ -138,4 +144,80 @@ export function getServerDid() {
     throw new Error('w3up client not initialized or DID not available. Call initializeW3UpClient first.')
   }
   return serverDid
+}
+
+/**
+ * Multi-Admin Client Management
+ * 
+ * These functions support multiple admins by maintaining separate client instances
+ * for each admin, ensuring that delegations created by one admin can be used
+ * by the same admin's client for uploads.
+ */
+
+/**
+ * Gets or creates a client for a specific admin
+ * 
+ * @param {string} adminEmail - The admin's email address
+ * @returns {Promise<Client>} The admin's client instance
+ */
+export async function getAdminClient(adminEmail) {
+  if (!adminEmail) {
+    throw new Error('Admin email is required for multi-admin client management');
+  }
+
+  if (adminClients.has(adminEmail)) {
+    return adminClients.get(adminEmail);
+  }
+
+  // Create a new client for this admin
+  logger.info('Creating new client for admin', { adminEmail });
+  
+  try {
+    // For now, we'll use the global client as a template
+    // In a full implementation, each admin would have their own credentials
+    const adminClient = await create();
+    adminClients.set(adminEmail, adminClient);
+    
+    logger.info('Admin client created successfully', { 
+      adminEmail, 
+      adminDid: adminClient.did() 
+    });
+    
+    return adminClient;
+  } catch (error) {
+    logger.error('Failed to create admin client', { 
+      adminEmail, 
+      error: error.message 
+    });
+    throw error;
+  }
+}
+
+/**
+ * Gets all admin clients
+ * 
+ * @returns {Map<string, Client>} Map of admin email to client
+ */
+export function getAllAdminClients() {
+  return new Map(adminClients);
+}
+
+/**
+ * Clears a specific admin's client
+ * 
+ * @param {string} adminEmail - The admin's email address
+ */
+export function clearAdminClient(adminEmail) {
+  if (adminClients.has(adminEmail)) {
+    adminClients.delete(adminEmail);
+    logger.info('Cleared admin client', { adminEmail });
+  }
+}
+
+/**
+ * Clears all admin clients
+ */
+export function clearAllAdminClients() {
+  adminClients.clear();
+  logger.info('Cleared all admin clients');
 } 

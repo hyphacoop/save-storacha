@@ -455,51 +455,45 @@ export async function getUserPrincipal(userDid) {
  * - Fast access to active delegations
  * - Persistence across server restarts
  * - Automatic expiration handling
+ * - Multi-admin support with admin tracking
  */
 
-export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar, expiresAt = null) {
+export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar, expiresAt = null, createdBy = null) {
     // In dev mode, don't store delegations - they come from dev cache
     if (isDevAuth()) {
-        logger.debug('Dev mode: Skipping delegation storage', { userDid, spaceDid });
         return;
     }
 
-    const now = Date.now();
-    
-    // Verify we have a principal for this user
-    const userPrincipal = userPrincipalStore.get(userDid);
-    if (!userPrincipal) {
-        throw new Error('Cannot store delegation: No principal found for user');
-    }
-    
-    // Update memory store
-    const existingDelegations = delegationStore.get(userDid) || [];
-    const newDelegations = [
-        ...existingDelegations,
-        {
-            spaceDid,
-            delegationCid,
-            delegationCar,
-            createdAt: now,
-            expiresAt
-        }
-    ];
-    delegationStore.set(userDid, newDelegations);
+    const delegation = {
+        userDid,
+        spaceDid,
+        delegationCid,
+        delegationCar,
+        expiresAt,
+        createdBy, // Track which admin created this delegation
+        createdAt: Date.now()
+    };
 
-    // Update database
+    // Store in memory
+    if (!delegationStore.has(userDid)) {
+        delegationStore.set(userDid, []);
+    }
+    delegationStore.get(userDid).push(delegation);
+
+    // Store in database
     try {
         const db = getDatabase();
         db.prepare(`
             INSERT OR REPLACE INTO delegations 
-            (userDid, spaceDid, delegationCid, delegationCar, createdAt, updatedAt, expiresAt)
+            (userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, createdAt)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(userDid, spaceDid, delegationCid, delegationCar, now, now, expiresAt);
+        `).run(userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, Date.now());
         
-        logger.info('Stored delegation', { 
+        logger.debug('Delegation stored in database', { 
             userDid, 
             spaceDid, 
             delegationCid,
-            expiresAt: expiresAt ? new Date(expiresAt).toISOString() : 'never'
+            createdBy 
         });
     } catch (error) {
         logger.error('Failed to store delegation in database', { 
@@ -507,7 +501,6 @@ export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar,
             spaceDid, 
             error: error.message 
         });
-        // Don't throw - we still have the in-memory store
     }
 }
 
