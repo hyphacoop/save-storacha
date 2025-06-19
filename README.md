@@ -83,8 +83,8 @@ This approach ensures:
 
 ### Principal Derivation Process
 ```javascript
-// User DID: did:key:z6MkfBpJtkRbCTeQES5wDFUfVPftFjjDhYf8KCrefyivHVsV
-// Derived Principal: did:key:z6MkfiSNrBMUzsdKQTfWkJrx8Ax79422KcM3VKsxGTwnc3Yb
+// User DID: did:key:example-user-did
+// Derived Principal: did:key:example-principal-did
 
 const secretBytes = new TextEncoder().encode(userDid);
 const { digest } = await sha256.digest(secretBytes);
