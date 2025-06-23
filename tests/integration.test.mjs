@@ -11,8 +11,11 @@ import {
   clearSession,
   storeDelegation,
   getDelegationsForUser,
-  revokeDelegation
+  revokeDelegation,
+  storeAdminSpace,
+  getAdminSpaces
 } from '../src/lib/store.js';
+import { getDatabase } from '../src/lib/db.js';
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
 // Mock external dependencies
@@ -38,63 +41,60 @@ jest.mock('../src/lib/w3upClient.js', () => ({
   getAdminClient: jest.fn()
 }));
 
-// Mock the database
-jest.mock('../src/lib/db.js', () => ({
-  getDatabase: jest.fn(() => ({
-    prepare: jest.fn(() => ({
-      run: jest.fn(() => ({ changes: 1 })),
-      get: jest.fn(),
-      all: jest.fn()
-    }))
-  }))
-}));
-
 describe('Integration Tests', () => {
   let app;
 
   beforeEach(() => {
     app = express();
     app.use(express.json());
-
-    // Add basic middleware for testing
-    app.use((req, res, next) => {
-      // Mock session middleware
-      if (req.headers['x-session-id']) {
-        req.userEmail = 'test-admin@example.com';
-      }
-      next();
-    });
   });
 
   afterEach(() => {
     jest.clearAllMocks();
   });
 
+  // Helper to create DID-email mapping
+  function createDidEmailMapping(did, email) {
+    const db = getDatabase();
+    db.prepare(`
+      INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
+      VALUES (?, ?, ?)
+    `).run(did, email, Date.now());
+  }
+
   describe('Complete Workflow: Single Admin', () => {
-    test.skip('should complete full workflow: login → list spaces → delegate → upload', async () => {
+    test('should complete full workflow: login → list spaces → delegate → upload', async () => {
       const adminEmail = 'admin@example.com';
+      const adminDid = 'did:key:admin';
       const userDid = testUtils.createTestDid();
       const spaceDid = 'did:key:space-1';
 
+      // 0. Create DID-email mapping for foreign key constraint
+      createDidEmailMapping(adminDid, adminEmail);
+
       // 1. Admin login (simulated)
-      const { sessionId } = createSession(adminEmail, 'did:key:admin');
+      const { sessionId } = createSession(adminEmail, adminDid);
       expect(sessionId).toBeDefined();
 
-      // 2. List spaces (simulated)
-      const spaces = await getSpaces(adminEmail);
-      expect(spaces).toHaveLength(2);
-      expect(spaces[0].did).toBe('did:key:space-1');
+      // 2. Store admin space
+      storeAdminSpace(adminEmail, spaceDid, 'Test Space 1');
 
-      // 3. Create delegation
+      // 3. List spaces as admin
+      const adminSpaces = await getSpaces(adminDid);
+      expect(adminSpaces).toHaveLength(1);
+      expect(adminSpaces[0].did).toBe(spaceDid);
+      expect(adminSpaces[0].isAdmin).toBe(true);
+
+      // 4. Create delegation
       storeDelegation(userDid, spaceDid, 'test-cid', 'test-car', null, adminEmail);
 
-      // 4. Verify delegation exists
-      const delegations = getDelegationsForUser(userDid);
-      expect(delegations).toHaveLength(1);
-      expect(delegations[0].spaceDid).toBe(spaceDid);
-      expect(delegations[0].createdBy).toBe(adminEmail);
+      // 5. List spaces as user
+      const userSpaces = await getSpaces(userDid);
+      expect(userSpaces).toHaveLength(1);
+      expect(userSpaces[0].did).toBe(spaceDid);
+      expect(userSpaces[0].isAdmin).toBe(false);
 
-      // 5. Simulate upload (would use the delegation)
+      // 6. Simulate upload (would use the delegation)
       const uploadResult = await simulateUpload(userDid, spaceDid);
       expect(uploadResult.success).toBe(true);
       expect(uploadResult.cid).toMatch(/^bafkreic/);
@@ -102,45 +102,64 @@ describe('Integration Tests', () => {
   });
 
   describe('Multi-Admin Workflow', () => {
-    test.skip('should support multiple admins with isolated spaces and delegations', async () => {
+    test('should support multiple admins with isolated spaces and delegations', async () => {
       const adminA = 'admin-a@example.com';
       const adminB = 'admin-b@example.com';
+      const adminADid = 'did:key:admin-a';
+      const adminBDid = 'did:key:admin-b';
       const userDid = testUtils.createTestDid();
       const spaceDidA = 'did:key:space-admin-a';
       const spaceDidB = 'did:key:space-admin-b';
 
+      // Create DID-email mappings
+      createDidEmailMapping(adminADid, adminA);
+      createDidEmailMapping(adminBDid, adminB);
+
       // Admin A workflow
-      createSession(adminA, 'did:key:admin-a');
+      createSession(adminA, adminADid);
+      storeAdminSpace(adminA, spaceDidA, 'Admin A Space');
       storeDelegation(userDid, spaceDidA, 'cid-a', 'car-a', null, adminA);
 
       // Admin B workflow
-      createSession(adminB, 'did:key:admin-b');
+      createSession(adminB, adminBDid);
+      storeAdminSpace(adminB, spaceDidB, 'Admin B Space');
       storeDelegation(userDid, spaceDidB, 'cid-b', 'car-b', null, adminB);
 
-      // Verify isolation
-      const delegations = getDelegationsForUser(userDid);
-      expect(delegations).toHaveLength(2);
+      // Verify spaces for each admin
+      const adminASpaces = await getSpaces(adminADid);
+      const adminBSpaces = await getSpaces(adminBDid);
 
-      const adminADelegation = delegations.find(d => d.createdBy === adminA);
-      const adminBDelegation = delegations.find(d => d.createdBy === adminB);
+      expect(adminASpaces).toHaveLength(1);
+      expect(adminBSpaces).toHaveLength(1);
+      expect(adminASpaces[0].did).toBe(spaceDidA);
+      expect(adminBSpaces[0].did).toBe(spaceDidB);
+      expect(adminASpaces[0].isAdmin).toBe(true);
+      expect(adminBSpaces[0].isAdmin).toBe(true);
 
-      expect(adminADelegation.spaceDid).toBe(spaceDidA);
-      expect(adminBDelegation.spaceDid).toBe(spaceDidB);
-      expect(adminADelegation.delegationCid).toBe('cid-a');
-      expect(adminBDelegation.delegationCid).toBe('cid-b');
+      // Verify user sees both spaces with correct isAdmin flags
+      const userSpaces = await getSpaces(userDid);
+      expect(userSpaces).toHaveLength(2);
+      expect(userSpaces.every(space => !space.isAdmin)).toBe(true);
     });
 
-    test.skip('should handle admin switching without breaking delegations', async () => {
+    test('should handle admin switching without breaking delegations', async () => {
       const adminA = 'admin-a@example.com';
       const adminB = 'admin-b@example.com';
+      const adminADid = 'did:key:admin-a-switch';
+      const adminBDid = 'did:key:admin-b-switch';
       const userDid = testUtils.createTestDid();
       const spaceDid = 'did:key:shared-space';
 
+      // Create DID-email mappings
+      createDidEmailMapping(adminADid, adminA);
+      createDidEmailMapping(adminBDid, adminB);
+
       // Admin A creates delegation
+      createSession(adminA, adminADid);
       storeDelegation(userDid, spaceDid, 'cid-a', 'car-a', null, adminA);
 
       // Admin B logs in (simulating admin switch)
-      createSession(adminB, 'did:key:admin-b');
+      createSession(adminB, adminBDid);
 
       // Verify Admin A's delegation still exists and is tracked
       const delegations = getDelegationsForUser(userDid);
@@ -151,8 +170,6 @@ describe('Integration Tests', () => {
   });
 
   describe('Error Handling', () => {
-    test.skip('should handle missing admin data gracefully', async () => {});
-
     test('should handle delegation revocation correctly', async () => {
       const userDid = testUtils.createTestDid();
       const spaceDid = testUtils.createTestDid();
@@ -167,7 +184,7 @@ describe('Integration Tests', () => {
 
       // Revoke delegation
       const wasRevoked = revokeDelegation(userDid, spaceDid, 'revoke-cid');
-      expect(wasRevoked).toBe(false);
+      expect(wasRevoked).toBe(true); // Should be true when successfully revoked
 
       // Verify it's gone
       delegations = getDelegationsForUser(userDid);
@@ -192,12 +209,47 @@ describe('Integration Tests', () => {
 });
 
 // Helper functions
-async function getSpaces() {
-  // Mock implementation for testing
-  return [
-    { did: 'did:key:space-1', name: 'Test Space 1' },
-    { did: 'did:key:space-2', name: 'Test Space 2' }
-  ];
+async function getSpaces(did) {
+  // Mock implementation for testing that simulates the real spaceService.js logic
+  
+  // First, get admin email from DID if it exists
+  const db = getDatabase();
+  const mapping = db.prepare(`
+    SELECT email FROM did_email_mapping WHERE did = ?
+  `).get(did);
+  
+  const spaces = [];
+  
+  // If user is an admin, get their admin spaces
+  if (mapping) {
+    const adminSpaces = getAdminSpaces(mapping.email);
+    if (adminSpaces.length > 0) {
+      spaces.push(...adminSpaces.map(space => ({
+        did: space.did,
+        name: space.name,
+        isAdmin: true
+      })));
+    }
+  }
+  
+  // Get delegated spaces
+  const delegations = getDelegationsForUser(did);
+  if (delegations.length > 0) {
+    const delegatedSpaces = delegations.map(d => ({
+      did: d.spaceDid,
+      name: d.spaceName || d.spaceDid,
+      isAdmin: false
+    }));
+    
+    // Merge spaces, preferring admin access
+    for (const space of delegatedSpaces) {
+      if (!spaces.some(s => s.did === space.did)) {
+        spaces.push(space);
+      }
+    }
+  }
+  
+  return spaces;
 }
 
 async function simulateUpload(userDid, spaceDid) {
