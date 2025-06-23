@@ -18,7 +18,7 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | GET  | /auth/sessions | List sessions |
 | POST | /auth/sessions/:id/deactivate | Deactivate a session |
 | POST | /auth/sessions/deactivate-all | Deactivate all sessions |
-| GET  | /spaces | List admin spaces |
+| GET  | /spaces | List all spaces available to a user, including both admin spaces and delegated spaces |
 | GET  | /spaces/usage | Usage for a space |
 | GET  | /spaces/account-usage | Total account usage |
 | POST | /upload | Upload through token service |
@@ -141,7 +141,11 @@ curl -X POST -H "x-session-id: your-session-id" \
 ## Spaces
 
 ### GET /spaces
-List spaces for authenticated admin.
+List all spaces available to a user, including both admin spaces and delegated spaces.
+
+**Required header:** `x-user-did` (user's DID)
+
+**Description:** Returns all spaces that the user has access to, with an `isAdmin` flag indicating whether they have admin privileges for each space. If a user has both admin and delegated access to a space, they will see `isAdmin: true`.
 
 **Request:**
 ```bash

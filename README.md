@@ -109,7 +109,7 @@ For detailed API documentation including request/response formats, examples, and
 - `POST /auth/sessions/deactivate-all` - Deactivate all sessions
 
 #### Spaces
-- `GET /spaces` - List spaces for authenticated admin
+- `GET /spaces` - List all spaces available to a user (both admin and delegated spaces)
 - `GET /spaces/usage` - Get space usage information
 - `GET /spaces/account-usage` - Get total storage usage across all spaces for an admin
 
@@ -119,7 +119,6 @@ For detailed API documentation including request/response formats, examples, and
 - `GET /uploads` - List uploads for a user in a specific space
 
 #### Delegations
-- `GET /delegations/user/spaces` - List spaces accessible to a user
 - `GET /delegations/list` - List delegations (admin only)
 - `POST /delegations/create` - Create a delegation (admin only)
 - `GET /delegations/get` - Get delegation details for a specific space
