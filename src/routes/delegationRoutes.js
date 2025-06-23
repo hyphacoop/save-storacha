@@ -168,53 +168,6 @@ router.get('/list', ensureAuthenticated, async (req, res) => {
     }
 });
 
-// GET /delegations/user/spaces - List spaces for the authenticated user (public endpoint)
-router.get('/user/spaces', async (req, res) => {
-    const userDid = req.headers['x-user-did'];
-
-    if (!userDid) {
-        return res.status(400).json({ 
-            message: 'x-user-did header is required' 
-        });
-    }
-
-    try {
-        // Validate the DID format
-        if (!userDid.startsWith('did:key:')) {
-            return res.status(400).json({ 
-                message: 'Invalid DID format' 
-            });
-        }
-
-        // Get active delegations for the user
-        const delegations = getDelegationsForUser(userDid);
-        
-        // Filter out expired delegations and map to space DIDs
-        const now = Date.now();
-        const activeDelegations = delegations.filter(d => 
-            !d.expiresAt || d.expiresAt > now
-        );
-        
-        const spaceDids = activeDelegations.map(d => d.spaceDid);
-        
-        res.json({
-            userDid,
-            spaces: Array.from(new Set(spaceDids)),
-            expiresAt: activeDelegations.length > 0 ? 
-                new Date(Math.min(...activeDelegations.map(d => d.expiresAt || Infinity))).toISOString() 
-                : null
-        });
-    } catch (error) {
-        logger.error('Failed to list user spaces', { 
-            userDid, 
-            error: error.message 
-        });
-        res.status(500).json({ 
-            message: error.message || 'Failed to list user spaces'
-        });
-    }
-});
-
 // DELETE /delegations/revoke - Revoke a delegation
 router.delete('/revoke', ensureAuthenticated, async (req, res) => {
     const { userDid, spaceDid } = req.body;
