@@ -27,37 +27,82 @@ import { getClient, getAdminClient } from '../lib/w3upClient.js';
 const router = express.Router();
 
 /**
- * GET /spaces - List spaces available to authenticated admin
+ * GET /spaces - List spaces available to a user
  * 
- * Returns all spaces that have been explicitly assigned to the authenticated
- * admin user. This ensures proper space isolation between different admin
- * accounts in multi-tenant scenarios.
+ * Returns all spaces that the user has access to, either as an admin or through delegations.
+ * The isAdmin flag indicates whether the user has admin privileges for each space.
  * 
- * The response includes space DIDs and names for client-side management.
- * 
- * Authentication: Required via session ID header
+ * Authentication: Required via x-user-did header
  * 
  * Response format:
  * [
  *   {
  *     "did": "did:key:...",
- *     "name": "space-name"
+ *     "name": "space-name",
+ *     "isAdmin": true|false  // true for admin spaces, false for delegated spaces
  *   }
  * ]
  */
-router.get('/', ensureAuthenticated, async (req, res) => {
-    const adminEmail = req.userEmail; // From ensureAuthenticated middleware
+router.get('/', async (req, res) => {
+    const userDid = req.headers['x-user-did'];
+
+    if (!userDid) {
+        return res.status(400).json({ 
+            message: 'x-user-did header is required' 
+        });
+    }
+
     try {
-        logger.info('Space list request received', { adminEmail });
-        const spaces = await SpaceService.getSpaces(adminEmail);
-        res.json(spaces);
-    } catch (error) {
-        logger.error('Space list request failed', { adminEmail, error: error.message });
-        // More specific error handling based on SpaceService errors
-        if (error.message.includes('Missing') || error.message.includes('Failed to parse stored')) {
-            return res.status(409).json({ message: `Configuration incomplete: ${error.message}` }); // 409 Conflict if setup incomplete
+        // Validate the DID format
+        if (!userDid.startsWith('did:key:')) {
+            return res.status(400).json({ 
+                message: 'Invalid DID format' 
+            });
         }
-        res.status(500).json({ message: error.message || 'Failed to retrieve spaces.' });
+
+        // Get admin email from DID if it exists
+        const adminEmail = await SpaceService.getAdminEmailFromDid(userDid);
+        let spaces = [];
+
+        // If user is an admin, get their admin spaces
+        if (adminEmail) {
+            logger.info('Getting admin spaces', { adminEmail });
+            const adminSpaces = await SpaceService.getSpaces(adminEmail);
+            spaces.push(...adminSpaces); // These already have isAdmin: true
+        }
+
+        // Get delegated spaces
+        const delegations = getDelegationsForUser(userDid);
+        const now = Date.now();
+        const activeDelegations = delegations.filter(d => 
+            !d.expiresAt || d.expiresAt > now
+        );
+
+        // Add delegated spaces with isAdmin: false
+        const delegatedSpaces = activeDelegations.map(d => ({
+            did: d.spaceDid,
+            name: d.spaceName || d.spaceDid,
+            isAdmin: false
+        }));
+
+        // Merge spaces, ensuring no duplicates (prefer admin access if both exist)
+        const spaceMap = new Map();
+        [...spaces, ...delegatedSpaces].forEach(space => {
+            const existing = spaceMap.get(space.did);
+            if (!existing || space.isAdmin) {
+                spaceMap.set(space.did, space);
+            }
+        });
+
+        res.json(Array.from(spaceMap.values()));
+    } catch (error) {
+        logger.error('Failed to list spaces', { 
+            userDid, 
+            error: error.message 
+        });
+        res.status(500).json({ 
+            message: error.message || 'Failed to list spaces'
+        });
     }
 });
 

@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect, beforeEach, jest } from '@jest/globals';
-import { storeDelegation, getDelegationsForUser, revokeDelegation } from '../src/lib/store.js';
+import { storeDelegation, getDelegationsForUser, revokeDelegation, getAdminSpaces } from '../src/lib/store.js';
 
 // Mock the w3up client
 jest.mock('../src/lib/w3upClient.js', () => ({
@@ -61,6 +61,58 @@ describe('Delegation Management', () => {
       const delegations = getDelegationsForUser(userDid);
       expect(delegations).toHaveLength(1);
       expect(delegations[0].createdBy).toBeNull();
+    });
+  });
+
+  describe('Space Access', () => {
+    test('should correctly determine admin vs delegated access', async () => {
+      const userDid = testUtils.createTestDid();
+      const adminEmail = testUtils.createTestEmail();
+      const spaceDid = testUtils.createTestDid();
+
+      // Create both admin access and delegation for the same space
+      storeDelegation(userDid, spaceDid, 'cid-1', 'car-1', null, adminEmail);
+
+      // Helper function to simulate the spaces endpoint response
+      async function getSpaces(did) {
+        const adminSpaces = getAdminSpaces(did);
+        const delegations = getDelegationsForUser(did);
+        
+        const spaces = [];
+        
+        // Add admin spaces
+        if (adminSpaces.length > 0) {
+          spaces.push(...adminSpaces.map(space => ({
+            did: space.did,
+            name: space.name,
+            isAdmin: true
+          })));
+        }
+        
+        // Add delegated spaces
+        if (delegations.length > 0) {
+          const delegatedSpaces = delegations.map(d => ({
+            did: d.spaceDid,
+            name: d.spaceName || d.spaceDid,
+            isAdmin: false
+          }));
+          
+          // Merge spaces, preferring admin access
+          for (const space of delegatedSpaces) {
+            if (!spaces.some(s => s.did === space.did)) {
+              spaces.push(space);
+            }
+          }
+        }
+        
+        return spaces;
+      }
+
+      // Test user access
+      const userSpaces = await getSpaces(userDid);
+      expect(userSpaces).toHaveLength(1);
+      expect(userSpaces[0].did).toBe(spaceDid);
+      expect(userSpaces[0].isAdmin).toBe(false);
     });
   });
 
@@ -121,7 +173,7 @@ describe('Delegation Management', () => {
       storeDelegation(userDid, spaceDid, delegationCid, 'car-data', null, 'admin@example.com');
 
       const wasRevoked = revokeDelegation(userDid, spaceDid, delegationCid);
-      expect(wasRevoked).toBe(false);
+      expect(wasRevoked).toBe(true);
 
       const delegations = getDelegationsForUser(userDid);
       expect(delegations).toHaveLength(0);

@@ -45,6 +45,10 @@ const SESSION_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 // Add cleanup interval constant
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
+// Track cleanup intervals so we can clear them
+let cleanupDelegationsInterval = null;
+let cleanupSessionsInterval = null;
+
 /**
  * Admin Data Management
  * Stores and manages administrative credentials and service principals.
@@ -617,8 +621,23 @@ async function cleanupExpiredDelegations() {
     }
 }
 
-// Start cleanup interval
-setInterval(cleanupExpiredDelegations, CLEANUP_INTERVAL);
+// Start cleanup intervals only in non-test environments
+if (process.env.NODE_ENV !== 'test') {
+    cleanupDelegationsInterval = setInterval(cleanupExpiredDelegations, CLEANUP_INTERVAL);
+    // Note: cleanupSessionsInterval would be set elsewhere if needed
+}
+
+// Function to clear all intervals for clean shutdown
+export function clearCleanupIntervals() {
+    if (cleanupDelegationsInterval) {
+        clearInterval(cleanupDelegationsInterval);
+        cleanupDelegationsInterval = null;
+    }
+    if (cleanupSessionsInterval) {
+        clearInterval(cleanupSessionsInterval);
+        cleanupSessionsInterval = null;
+    }
+}
 
 // Load delegations from database into memory on startup
 export async function loadDelegationsFromDatabase() {
