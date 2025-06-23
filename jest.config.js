@@ -38,8 +38,15 @@ export default {
     'html'
   ],
   
-  // Setup files
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.cjs'],
+  // Global setup/teardown for database
+  globalSetup: '<rootDir>/tests/_dbSetup.cjs',
+  globalTeardown: '<rootDir>/tests/_dbTeardown.cjs',
+  
+  // Setup files executed after env
+  setupFilesAfterEnv: [
+    '<rootDir>/tests/setup.cjs',
+    '<rootDir>/tests/_perTest.cjs'
+  ],
   
   // Test timeout
   testTimeout: 30000,
