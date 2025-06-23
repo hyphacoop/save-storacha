@@ -24,7 +24,7 @@ import fs from 'fs/promises';
 import { logger } from './logger.js';
 
 // Database file location - stored in a dedicated data directory
-const DB_PATH = path.join(process.cwd(), 'data', 'delegations.db');
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'delegations.db');
 const MIGRATIONS_DIR = path.join(process.cwd(), 'migrations');
 
 /**
