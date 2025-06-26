@@ -40,7 +40,7 @@ Unified login endpoint (email + DID required).
 curl -X POST -H "Content-Type: application/json" \
   -d '{
     "email": "your-email@example.com",
-    "did": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
   }' \
   http://localhost:3000/auth/login
 ```
@@ -50,7 +50,7 @@ curl -X POST -H "Content-Type: application/json" \
 {
   "message": "Login successful",
   "sessionId": "your-session-id",
-  "did": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
 }
 ```
 
@@ -61,7 +61,7 @@ Admin login with DID only (for subsequent logins).
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{
-    "did": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
   }' \
   http://localhost:3000/auth/login/did
 ```
@@ -71,7 +71,7 @@ curl -X POST -H "Content-Type: application/json" \
 {
   "message": "Login successful",
   "sessionId": "your-session-id",
-  "did": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
 }
 ```
 
@@ -143,13 +143,21 @@ curl -X POST -H "x-session-id: your-session-id" \
 ### GET /spaces
 List all spaces available to a user, including both admin spaces and delegated spaces.
 
-**Required header:** `x-user-did` (user's DID)
+**Authentication:** Flexible - supports two authentication methods:
+- **Admin users:** `x-session-id` header (session ID)
+- **Delegated users:** `x-user-did` header (user DID)
 
 **Description:** Returns all spaces that the user has access to, with an `isAdmin` flag indicating whether they have admin privileges for each space. If a user has both admin and delegated access to a space, they will see `isAdmin: true`.
 
-**Request:**
+**Admin Request:**
 ```bash
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+curl -H "x-session-id: your-session-id" \
+  http://localhost:3000/spaces
+```
+
+**Delegated User Request:**
+```bash
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   http://localhost:3000/spaces
 ```
 
@@ -157,7 +165,7 @@ curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
 ```json
 [
   {
-    "did": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+    "did": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
     "name": "space-name",
     "isAdmin": true  // true for admin spaces, false for delegated spaces
   }
@@ -169,18 +177,31 @@ curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
 - `isAdmin: false` - User can only perform delegated actions (e.g., uploads)
 
 ### GET /spaces/usage
-Get space usage information (requires spaceDid query parameter and admin authentication).
+Get space usage information for a specific space. User must have access to the space (either as admin or through delegation).
 
-**Request:**
+**Authentication:** Flexible - supports two authentication methods:
+- **Admin users:** `x-session-id` header (session ID)
+- **Delegated users:** `x-user-did` header (user DID)
+
+**Query Parameters:**
+- `spaceDid` (required): The DID of the space to check usage for
+
+**Admin Request:**
 ```bash
 curl -H "x-session-id: your-session-id" \
-  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+```
+
+**Delegated User Request:**
+```bash
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 ```
 
 **Response:**
 ```json
 {
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
   "usage": {
     "bytes": 11744,
     "mb": 0.0112,
@@ -212,7 +233,7 @@ curl -H "x-session-id: your-session-id" \
   },
   "spaces": [
     {
-      "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+      "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
       "name": "delegation_test",
       "usage": {
         "bytes": 11744,
@@ -232,8 +253,8 @@ There are two ways to upload files:
 
 #### Step 1: Get authentication tokens for the bridge
 ```bash
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
-  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 ```
 
 **Response:**
@@ -257,14 +278,20 @@ curl -X POST \
   https://up.storacha.network/bridge
 ```
 
-### 2. Upload through Token Service (✅ Working - Recommended)
+### 2. Upload through Token Service (✅ Working - Recommended for now)
+
+**Authentication:** `x-user-did` header (user DID)
+
+**Form Parameters:**
+- `file` (required): The file to upload
+- `spaceDid` (required): The DID of the space to upload to
 
 **Request:**
 ```bash
 curl -X POST \
-  -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
-  -F "file=@/path/to/file.png" \
-  -F "spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74" \
+  -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  -F "file=@HELLO_WORLD.txt" \
+  -F "spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba" \
   http://localhost:3000/upload
 ```
 
@@ -272,8 +299,8 @@ curl -X POST \
 ```json
 {
   "success": true,
-  "cid": "bafkreige7hs3pe3d2h3o5a2l2hfrbaafmb7anoxwszuyamhazoanygwebe",
-  "size": 11744
+  "cid": "bafkreiexampleCIDforDocumentation1234567890abcdef",
+  "size": 17
 }
 ```
 
@@ -287,31 +314,48 @@ This endpoint:
 ### GET /uploads
 List uploads for a user in a specific space.
 
+**Authentication:** `x-user-did` header (user DID)
+
+**Query Parameters:**
+- `spaceDid` (required): The DID of the space to list uploads for
+- `cursor` (optional): Pagination cursor for next page
+- `size` (optional): Number of results per page (default: 25)
+
 **Request:**
 ```bash
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
-  "http://localhost:3000/uploads?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 ```
 
 **Response:**
 ```json
 {
   "success": true,
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
   "uploads": [
     {
-      "cid": "bafkreige7hs3pe3d2h3o5a2l2hfrbaafmb7anoxwszuyamhazoanygwebe",
-      "size": 11744,
-      "created": "2024-01-01T12:00:00.000Z",
-      "gatewayUrl": "https://bafkreige7hs3pe3d2h3o5a2l2hfrbaafmb7anoxwszuyamhazoanygwebe.ipfs.w3s.link/"
+      "cid": "bafkreiexampleCIDforFile1234567890documentation",
+      "created": "2025-06-26T15:27:28.023Z",
+      "insertedAt": "2025-06-26T15:27:28.023Z",
+      "updatedAt": "2025-06-26T15:27:28.023Z",
+      "gatewayUrl": "https://bafkreiexampleCIDforFile1234567890documentation.ipfs.w3s.link/"
+    },
+    {
+      "cid": "bafkreiexampleCIDforFile0987654321documentation",
+      "created": "2025-06-26T15:26:55.022Z",
+      "insertedAt": "2025-06-26T15:26:55.022Z",
+      "updatedAt": "2025-06-26T15:26:55.022Z",
+      "gatewayUrl": "https://bafkreiexampleCIDforFile0987654321documentation.ipfs.w3s.link/"
     }
   ],
-  "count": 1,
-  "cursor": "next-page-cursor",
+  "count": 2,
+  "cursor": "bafkreiexampleCIDforFile1234567890documentation",
   "hasMore": true
 }
 ```
+
+**Note:** This endpoint requires the user to have valid delegation access to the specified space. The response includes all uploads with their CIDs, timestamps, and IPFS gateway URLs for direct access.
 
 ## Delegations
 
@@ -320,15 +364,15 @@ List spaces accessible to a user.
 
 **Request:**
 ```bash
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   http://localhost:3000/delegations/user/spaces
 ```
 
 **Response:**
 ```json
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaces": ["did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"],
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"],
   "expiresAt": "2025-06-11T18:16:13.737Z"
 }
 ```
@@ -340,26 +384,26 @@ List delegations (admin only, requires session).
 ```bash
 # List spaces for a user
 curl -H "x-session-id: your-session-id" \
-  "http://localhost:3000/delegations/list?userDid=did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+  "http://localhost:3000/delegations/list?userDid=did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
 
 # List users for a space
 curl -H "x-session-id: your-session-id" \
-  "http://localhost:3000/delegations/list?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+  "http://localhost:3000/delegations/list?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 ```
 
 **Response (for user):**
 ```json
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaces": ["did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"]
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"]
 }
 ```
 
 **Response (for space):**
 ```json
 {
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
-  "users": ["did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"]
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+  "users": ["did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"]
 }
 ```
 
@@ -371,8 +415,8 @@ Create a delegation (admin only, requires session).
 curl -X POST -H "x-session-id: your-session-id" \
   -H "Content-Type: application/json" \
   -d '{
-    "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-    "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+    "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
     "expiresIn": 24
   }' \
   http://localhost:3000/delegations/create
@@ -394,15 +438,15 @@ Get delegation details for a specific space.
 
 **Request:**
 ```bash
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
-  "http://localhost:3000/delegations/get?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  "http://localhost:3000/delegations/get?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 ```
 
 **Response:**
 ```json
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
   "delegationCar": "base64-encoded-delegation-car",
   "expiresAt": "2025-06-11T18:16:13.737Z"
 }
@@ -417,8 +461,8 @@ curl -X DELETE \
   -H "x-session-id: your-session-id" \
   -H "Content-Type: application/json" \
   -d '{
-    "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-    "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+    "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
   }' \
   http://localhost:3000/delegations/revoke
 ```
@@ -489,7 +533,7 @@ curl -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
 # Response:
 [
   {
-    "did": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+    "did": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
     "name": "delegation_test",
     "isAdmin": true
   },
@@ -503,8 +547,8 @@ curl -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
 curl -X POST -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
   -H "Content-Type: application/json" \
   -d '{
-    "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-    "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+    "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
   }' \
   http://localhost:3000/delegations/create
 
@@ -523,13 +567,13 @@ curl -X POST -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
 #### 4. Verify User's Access
 ```bash
 # Check spaces accessible to the user
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   http://localhost:3000/delegations/user/spaces
 
 # Response:
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaces": ["did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"],
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"],
   "expiresAt": "2025-06-11T18:16:13.737Z"
 }
 ```
@@ -537,8 +581,8 @@ curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
 #### 5. Upload File (Method 1: Direct Bridge Upload)
 ```bash
 # Get authentication tokens
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
-  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 
 # Response:
 {
@@ -564,15 +608,15 @@ echo "Test upload after fix" > test-fix.txt
 
 # Upload the file
 curl -X POST \
-  -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+  -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   -F "file=@test-fix.txt" \
-  -F "spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74" \
+  -F "spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba" \
   http://localhost:3000/upload
 
 # Response:
 {
   "success": true,
-  "cid": "bafkreicwoj7fsn5ok5eiqwvdmcgfqot6pitbi3gsvyubj4fujueiladxwm",
+  "cid": "bafkreiexampleCIDforUpload123456789abcdef",
   "size": 22
 }
 ```
@@ -581,11 +625,11 @@ curl -X POST \
 ```bash
 # Check space usage as admin
 curl -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
-  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+  "http://localhost:3000/spaces/usage?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 
 # Response:
 {
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
   "usage": {
     "bytes": 22,
     "mb": 0.000021,
@@ -611,13 +655,13 @@ Here's a complete example of revoking a user's access to a space:
 #### 1. Verify Current Access
 ```bash
 # Check spaces accessible to the user before revocation
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   http://localhost:3000/delegations/user/spaces
 
 # Response:
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaces": ["did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"],
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"],
   "expiresAt": "2025-06-06T17:48:53.116Z"
 }
 ```
@@ -629,16 +673,16 @@ curl -X DELETE \
   -H "x-session-id: c0035bba684a603a18c4aa2f548e32ff" \
   -H "Content-Type: application/json" \
   -d '{
-    "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-    "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74"
+    "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
   }' \
   http://localhost:3000/delegations/revoke
 
 # Response:
 {
   "message": "Delegations revoked successfully",
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
-  "spaceDid": "did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
   "revokedCount": 1
 }
 ```
@@ -646,12 +690,12 @@ curl -X DELETE \
 #### 3. Verify Access is Revoked
 ```bash
 # Check spaces accessible to the user after revocation
-curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   http://localhost:3000/delegations/user/spaces
 
 # Response:
 {
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
   "spaces": [],
   "expiresAt": null
 }
@@ -662,15 +706,15 @@ curl -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
 # Attempt to upload a file (should fail)
 echo "Test upload after revocation" > test-revocation.txt
 curl -X POST \
-  -H "x-user-did: did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo" \
+  -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   -F "file=@test-revocation.txt" \
-  -F "spaceDid=did:key:z6MkpQyngHPsSJEfTQFGsXG3JC1x9MTZWucxdBjHPKYrJf74" \
+  -F "spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba" \
   http://localhost:3000/upload
 
 # Response:
 {
   "error": "No valid delegation found",
-  "userDid": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
 }
 ```
 
@@ -696,7 +740,7 @@ This endpoint initiated w3up email validation. It remains for backward-compatibi
 curl -X POST -H "Content-Type: application/json" \
   -d '{
     "email": "your-email@example.com",
-    "did": "did:key:z6Mkmmhkkog3vhhmQuppG17Df2V8iuEKfej3vS7f2F9JLMXo"
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
   }' \
   http://localhost:3000/auth/login/email
 ```
