@@ -28,10 +28,6 @@
 
 import { create, Client } from '@web3-storage/w3up-client'
 import { StoreMemory } from '@web3-storage/w3up-client/stores/memory'
-import { importDAG } from '@ucanto/core/delegation'
-import { CarReader } from '@ipld/car/reader'
-import fs from 'fs/promises'
-import path from 'path'
 import { logger } from './logger.js'
 
 /** @type {Client | null} */
@@ -42,7 +38,7 @@ let serverDid = null
 // Multi-admin support: Map of admin email to their client
 const adminClients = new Map(); // adminEmail -> Client
 
-const storePath = path.join(process.cwd(), 'w3up-client-data')
+
 
 export function clearClientState() {
   client = null
@@ -60,7 +56,6 @@ export function clearClientState() {
  * 4. Configures the client with any loaded proofs
  * 5. Verifies client accounts and spaces
  * 
- * The client is stored as a singleton instance for the application.
  * 
  * @returns {Promise<{client: Client, serverDid: string}>}
  */
@@ -68,19 +63,13 @@ export async function initializeW3UpClient() {
   clearClientState()
   
   try {
-    logger.info('🔍 W3UP INIT - Starting client initialization');
+    logger.info('🔍 W3UP INIT - Starting client initialization (no persistent storage)');
     
-    const principal = await loadStore()
-    logger.info('🔍 W3UP INIT - Store loading result', { 
-      hasPrincipal: !!principal,
-      principalType: principal ? 'loaded from disk' : 'none'
-    });
-    
-    client = await create(principal ? { principal } : undefined)
+    // Create a fresh client without any persistent storage to avoid cross-admin space leakage
+    client = await create()
     serverDid = client.did()
-    logger.info('🔍 W3UP INIT - Client created', { 
-      serverDid,
-      hasPrincipal: !!principal
+    logger.info('🔍 W3UP INIT - Fresh client created', { 
+      serverDid
     });
     
     if (client.accounts) {

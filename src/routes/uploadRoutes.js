@@ -170,10 +170,10 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
                 throw new Error('Delegation import failed - no delegation available');
             }
 
-            // Add and set the space
-            const space = await uploadClient.addSpace(importedDelegation);
-            await uploadClient.setCurrentSpace(space.did());
-            console.log('Set current space:', space.did());
+            // Add the delegation proof and explicitly set the requested space
+            await uploadClient.addSpace(importedDelegation);
+            await uploadClient.setCurrentSpace(spaceDid);
+            console.log('Set current space to requested space:', spaceDid);
 
             // Write the file to a temporary location
             tempFilePath = join(tmpdir(), req.file.originalname);
@@ -368,10 +368,10 @@ router.get('/uploads', async (req, res) => {
                 throw new Error('Delegation import failed - no delegation available');
             }
 
-            // Add and set the space
-            const space = await listClient.addSpace(importedDelegation);
-            await listClient.setCurrentSpace(space.did());
-            console.log('Set current space for listing:', space.did());
+            // Add the delegation proof and explicitly set the requested space
+            await listClient.addSpace(importedDelegation);
+            await listClient.setCurrentSpace(spaceDid);
+            console.log('Set current space for listing to requested space:', spaceDid);
 
             // List uploads using the w3up client
             console.log('Listing uploads...');
@@ -389,12 +389,14 @@ router.get('/uploads', async (req, res) => {
                 });
                 console.log('List result:', result);
                 
-                if (result && result.uploads) {
-                    for (const upload of result.uploads) {
+                if (result && result.results) {
+                    for (const upload of result.results) {
                         uploads.push({
                             cid: upload.root?.toString() || upload.cid?.toString(),
                             size: upload.size,
-                            created: upload.created,
+                            created: upload.insertedAt || upload.updatedAt,
+                            insertedAt: upload.insertedAt,
+                            updatedAt: upload.updatedAt,
                             gatewayUrl: upload.root
                                 ? `https://${upload.root.toString()}.ipfs.w3s.link/`
                                 : `https://${upload.cid?.toString()}.ipfs.w3s.link/`,
@@ -409,8 +411,8 @@ router.get('/uploads', async (req, res) => {
                     spaceDid,
                     uploads,
                     count: uploads.length,
-                    cursor: result?.cursor, // For next page
-                    hasMore: !!result?.cursor
+                    cursor: result?.before, // For next page
+                    hasMore: !!result?.before
                 });
                 
             } catch (error) {
