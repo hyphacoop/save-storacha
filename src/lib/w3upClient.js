@@ -27,6 +27,7 @@
  */
 
 import { create, Client } from '@web3-storage/w3up-client'
+import { StoreMemory } from '@web3-storage/w3up-client/stores/memory'
 import { importDAG } from '@ucanto/core/delegation'
 import { CarReader } from '@ipld/car/reader'
 import fs from 'fs/promises'
@@ -42,47 +43,6 @@ let serverDid = null
 const adminClients = new Map(); // adminEmail -> Client
 
 const storePath = path.join(process.cwd(), 'w3up-client-data')
-
-/**
- * Loads the client's proof store from disk
- * 
- * This function attempts to load any existing client state from disk,
- * specifically looking for:
- * 1. The proof.car file containing delegation proofs
- * 2. Any existing client configuration
- * 
- * If no state exists, it returns undefined to trigger fresh initialization.
- * 
- * @returns {Promise<{proof: import('@ucanto/core/delegation').Delegation} | undefined>}
- */
-async function loadStore() {
-  try {
-    await fs.mkdir(storePath, { recursive: true })
-    const proofPath = path.join(storePath, 'proof.car')
-    const proofBytes = await fs.readFile(proofPath)
-    const proof = await CarReader.fromBytes(proofBytes)
-    const delegation = await importDAG(proof.blocks)
-    logger.debug('Loaded proof from disk')
-    return { proof: delegation }
-  } catch (error) {
-    if (error.code !== 'ENOENT') {
-      logger.warn('Error loading proof', { error: error.message })
-    }
-    logger.debug('No proof found on disk')
-    return undefined
-  }
-}
-
-async function saveStore(proof) {
-  try {
-    await fs.mkdir(storePath, { recursive: true })
-    const proofPath = path.join(storePath, 'proof.car')
-    await fs.writeFile(proofPath, proof)
-    logger.debug('Saved proof to disk')
-  } catch (error) {
-    logger.error('Failed to save proof', { error: error.message })
-  }
-}
 
 export function clearClientState() {
   client = null
@@ -108,21 +68,44 @@ export async function initializeW3UpClient() {
   clearClientState()
   
   try {
+    logger.info('🔍 W3UP INIT - Starting client initialization');
+    
     const principal = await loadStore()
-    logger.info('Initializing client')
+    logger.info('🔍 W3UP INIT - Store loading result', { 
+      hasPrincipal: !!principal,
+      principalType: principal ? 'loaded from disk' : 'none'
+    });
     
     client = await create(principal ? { principal } : undefined)
     serverDid = client.did()
-    logger.info('Client initialized', { serverDid })
+    logger.info('🔍 W3UP INIT - Client created', { 
+      serverDid,
+      hasPrincipal: !!principal
+    });
     
     if (client.accounts) {
       const accounts = client.accounts()
-      logger.debug('Current accounts', { count: accounts.length })
+      logger.info('🔍 W3UP INIT - Initial accounts state', { 
+        count: Array.isArray(accounts) ? accounts.length : 0,
+        accountsType: typeof accounts,
+        accounts: Array.isArray(accounts) ? accounts.map(acc => ({
+          did: acc.did(),
+          email: acc.email || 'unknown'
+        })) : 'Not an array'
+      });
     }
     
     if (client.spaces) {
       const spaces = client.spaces()
-      logger.debug('Current spaces', { count: spaces.length })
+      logger.info('🔍 W3UP INIT - Initial spaces state', { 
+        count: spaces.length,
+        concern: spaces.length > 0 ? 'CLIENT HAS SPACES BEFORE ANY LOGIN - POSSIBLE PERSISTENCE ISSUE' : 'No spaces initially (expected)',
+        spacesDetails: spaces.map((space, index) => ({
+          index: index + 1,
+          did: space.did(),
+          name: space.name || 'Unnamed'
+        }))
+      });
     }
     
     return { client, serverDid }
@@ -166,26 +149,32 @@ export async function getAdminClient(adminEmail) {
   }
 
   if (adminClients.has(adminEmail)) {
+    logger.info('🔍 ADMIN CLIENT - Reusing existing isolated client', { adminEmail });
     return adminClients.get(adminEmail);
   }
 
-  // Create a new client for this admin
-  logger.info('Creating new client for admin', { adminEmail });
+  // Create a new isolated client for this admin using StoreMemory
+  logger.info('🔍 ADMIN CLIENT - Creating new isolated client for admin', { adminEmail });
   
   try {
-    // For now, we'll use the global client as a template
-    // In a full implementation, each admin would have their own credentials
-    const adminClient = await create();
+    // Each admin gets a completely isolated client with StoreMemory
+    // This ensures no cross-admin access to spaces
+    const adminClient = await create({
+      store: new StoreMemory()
+    });
+    
     adminClients.set(adminEmail, adminClient);
     
-    logger.info('Admin client created successfully', { 
+    logger.info('🔍 ADMIN CLIENT - Isolated client created successfully', { 
       adminEmail, 
-      adminDid: adminClient.did() 
+      adminDid: adminClient.did(),
+      initialSpaces: adminClient.spaces().length,
+      expectedSpaces: 0
     });
     
     return adminClient;
   } catch (error) {
-    logger.error('Failed to create admin client', { 
+    logger.error('Failed to create isolated admin client', { 
       adminEmail, 
       error: error.message 
     });
