@@ -24,37 +24,31 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
     }
 
     try {
-        // Skip Admin Service DID generation - use admin account directly
-        // Since we're working with DIDs for identification only, not principals
-        const adminAccount = client.agent;
-        logger.debug('Using admin account directly (no service DID)');
-
-        // Only return spaces that have been explicitly associated with this admin's email
+        // Only return spaces that have been explicitly mapped to this admin's email
         // This maintains proper space isolation between different admin accounts
-        const existingSpaces = getAdminSpaces(adminEmail);
+        const explicitlyMappedSpaces = getAdminSpaces(adminEmail);
         let spaces = [];
         
-        if (existingSpaces.length > 0) {
-            // Admin already has spaces associated - use those
-            spaces = existingSpaces.map(space => ({
-                name: space.spaceName,
-                did: space.spaceDid
+        if (explicitlyMappedSpaces.length > 0) {
+            // Admin has explicitly mapped spaces - use those
+            spaces = explicitlyMappedSpaces.map(space => ({
+                name: space.spaceName || space.name,
+                did: space.spaceDid || space.did
             }));
-            logger.info('Using existing spaces for admin', { 
+            logger.info('Using explicitly mapped spaces for admin', { 
                 adminEmail, 
                 spaceCount: spaces.length 
             });
         } else {
-            // No spaces associated with this admin yet
-            // This should not happen in normal flow, but handle gracefully
-            logger.warn('No spaces found for admin in database', { adminEmail });
+            // No spaces mapped to this admin yet - this is expected for new admins
+            logger.info('No spaces mapped to admin yet', { adminEmail });
             spaces = [];
         }
         
-        // Cache the spaces
+        // Cache the mapped spaces
         if (spaces.length > 0) {
             storeCachedSpaces(adminEmail, spaces);
-            logger.info('Found and stored spaces for admin', { 
+            logger.info('Cached mapped spaces for admin', { 
                 count: spaces.length,
                 spaceNames: spaces.map(s => s.name)
             });
@@ -65,7 +59,7 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
         
         // Create session with the provided DID if available, otherwise use adminDid
         const { sessionId } = createSession(adminEmail, providedDid || adminDid);
-        logger.info('Authorization complete (simplified)', { sessionId });
+        logger.info('Authorization complete with explicit mapping', { sessionId });
 
         return { sessionId };
 
@@ -77,115 +71,141 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
 
 /**
  * Initial login with email + DID
- * This establishes the Storacha account and creates a long-term session
+ * This establishes the Storacha account and automatically gets only the spaces that belong to that account
+ * Uses fresh w3up client to ensure admin isolation
  */
 export async function requestAdminLoginViaW3Up(email, did) {
-    logger.info('Requesting initial login', { email, did });
+    logger.info('🔍 FRESH LOGIN - Starting admin login with automatic space isolation', { email, did });
     
     if (!email || !did) {
         throw new Error('Both email and DID are required for initial login');
     }
 
-    const client = getClient();
+    // Create a fresh w3up client for this admin login
+    // This ensures the client only has access to spaces for this specific account
+    logger.info('🔍 FRESH CLIENT - Creating clean w3up client for admin', { email });
+    
+    let freshClient;
+    try {
+        const { create } = await import('@web3-storage/w3up-client');
+        const { StoreMemory } = await import('@web3-storage/w3up-client/stores/memory');
+        
+        freshClient = await create({ 
+            store: new StoreMemory() 
+        });
+        
+        logger.info('🔍 FRESH CLIENT - Clean client created', { 
+            email,
+            clientDid: freshClient.did(),
+            initialSpaces: freshClient.spaces().length,
+            expectedSpaces: 0
+        });
+    } catch (error) {
+        logger.error('Failed to create fresh w3up client', { error: error.message });
+        throw new Error('Failed to create w3up client for admin login');
+    }
     
     try {
-        // Step 1: Login with email (this creates the temporary access request)
-        const account = await client.login(email);
-        logger.info('Email login successful', { accountDid: account.did() });
+        // Step 1: Login with email using the fresh client
+        logger.info('🔍 W3UP LOGIN - Attempting login with fresh client', { email });
+        const account = await freshClient.login(email);
+        logger.info('🔍 W3UP LOGIN - Email login successful', { 
+            email,
+            accountDid: account.did(),
+            accountEmail: account.email || 'unknown'
+        });
         
         // Step 2: Wait for payment plan if needed
         try {
+            logger.info('🔍 W3UP PLAN - Checking payment plan');
             await account.plan.wait();
-            logger.info('Payment plan confirmed');
+            logger.info('🔍 W3UP PLAN - Payment plan confirmed');
         } catch (e) {
-            logger.debug('No payment plan required or already set');
+            logger.info('🔍 W3UP PLAN - No payment plan required or already set', { error: e.message });
         }
 
-        // Step 3: Store the DID-email mapping immediately
+        // Step 3: Get spaces that belong to this specific account
+        const accountSpaces = freshClient.spaces();
+        logger.info('🔍 SPACES - Account-specific spaces retrieved', { 
+            email,
+            accountDid: account.did(),
+            spacesFromAccount: accountSpaces.length,
+            spacesDetails: accountSpaces.map((space, index) => ({
+                index: index + 1,
+                did: space.did(),
+                name: space.name || 'Unnamed'
+            }))
+        });
+
+        // Step 4: Store the DID-email mapping
         const db = getDatabase();
         db.prepare(`
             INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
             VALUES (?, ?, ?)
         `).run(did, email, Date.now());
-        logger.info('Created DID-email mapping', { did, email });
+        logger.info('🔍 MAPPING - Created DID-email mapping', { did, email });
 
-        // Step 4: Check if we have spaces
-        const spaces = client.spaces();
-        let space;
-        let spacesList = [];
-        
-        if (spaces.length === 0) {
-            // Create a new space if none exist
-            logger.info('No spaces found, creating new space');
-            const spaceName = 'admin-space';
-            space = await client.createSpace(spaceName, { account });
-            logger.info('Created new space', { spaceName });
+        // Step 5: Automatically store the account's spaces
+        const spacesList = [];
+        for (const space of accountSpaces) {
+            const spaceName = space.name || space.did();
+            const spaceDid = space.did();
+            
+            // Store this space as belonging to this admin
+            storeAdminSpace(email, spaceDid, spaceName);
+            
             spacesList.push({
-                did: space.did(),
+                did: spaceDid,
                 name: spaceName
             });
             
-            // Store the newly created space as belonging to this admin
-            // This ensures proper ownership tracking for the new space
-            storeAdminSpace(email, space.did(), spaceName);
-        } else {
-            // Handle existing spaces by checking admin association
-            // For initial login, we need to determine which space belongs to this admin
-            const existingAdminSpaces = getAdminSpaces(email);
-            
-            if (existingAdminSpaces.length > 0) {
-                // Admin already has spaces associated (shouldn't happen in initial login, but handle it)
-                logger.info('Admin already has spaces in database during initial login', { 
-                    email, 
-                    spaceCount: existingAdminSpaces.length 
-                });
-                spacesList = existingAdminSpaces.map(adminSpace => ({
-                    did: adminSpace.spaceDid,
-                    name: adminSpace.spaceName
-                }));
-                space = spaces.find(s => s.did() === existingAdminSpaces[0].spaceDid);
-            } else {
-                // This is truly an initial login - we need to associate a space with this admin
-                // For proper isolation, we should not automatically assign any space
-                // Instead, the admin should explicitly choose which space to use
-                logger.warn('Initial login with existing spaces but no admin association', { 
-                    email, 
-                    availableSpaces: spaces.length 
-                });
-                
-                // For now, don't automatically assign any space - require explicit association
-                // This prevents accidentally giving access to wrong spaces
-                throw new Error('Account has existing spaces but no space is associated with this admin. Please contact support to associate a space with your account.');
-            }
+            logger.info('🔍 AUTO-ASSIGNED - Space automatically assigned to admin', { 
+                email, 
+                spaceDid, 
+                spaceName 
+            });
         }
 
-        // Step 5: Cache the spaces immediately
+        // Step 6: Set current space to the first available space (if any)
+        if (accountSpaces.length > 0) {
+            await freshClient.setCurrentSpace(accountSpaces[0].did());
+            logger.info('🔍 CURRENT SPACE - Set current space', { 
+                spaceDid: accountSpaces[0].did() 
+            });
+        } else {
+            logger.info('🔍 NO SPACES - No spaces available for admin', { email });
+        }
+        
+        // Step 7: Cache the account's spaces
         storeCachedSpaces(email, spacesList);
-        logger.info('Cached spaces', { 
+        logger.info('🔍 CACHED - Cached account spaces', { 
             count: spacesList.length,
             spaceNames: spacesList.map(s => s.name)
         });
-
-        // Step 6: Set current space
-        await client.setCurrentSpace(space.did());
-        logger.debug('Set current space', { spaceDid: space.did() });
         
-        // Step 7: Store admin data and create session using the provided DID
-        const adminDid = client.agent.did();
-        const authResult = await handleAdminW3UpAuthorization(email, adminDid, client, did);
+        // Step 8: Store admin data and create session
+        const adminDid = freshClient.agent.did();
+        const authResult = await handleAdminW3UpAuthorization(email, adminDid, freshClient, did);
         
         if (authResult.error) {
             throw new Error(authResult.error);
         }
         
+        logger.info('🔍 SUCCESS - Admin login completed with automatic space assignment', {
+            email,
+            spacesAssigned: spacesList.length,
+            sessionId: authResult.sessionId
+        });
+        
         return { 
-            message: 'Initial login successful',
+            message: 'Login successful - spaces automatically assigned from account',
             sessionId: authResult.sessionId,
             did: did,
-            spaces: spacesList
+            spaces: spacesList,
+            spacesAssigned: spacesList.length
         };
     } catch (error) {
-        logger.error('Initial login failed', { error: error.message });
+        logger.error('Fresh admin login failed', { email, error: error.message });
         throw error;
     }
 }
@@ -230,12 +250,12 @@ export async function handleSubsequentLogin(email, did) {
             };
         }
 
-        // Load spaces that have been assigned to this admin from the database
-        // This ensures that admins only see spaces they have explicit access to
-        const adminSpaces = getAdminSpaces(email);
-        logger.info('Loaded admin spaces for subsequent login', { 
+        // Load only explicitly mapped spaces for this admin
+        // Never show spaces that haven't been explicitly mapped
+        const mappedSpaces = getAdminSpaces(email);
+        logger.info('Loaded explicitly mapped spaces for subsequent login', { 
             email, 
-            spaceCount: adminSpaces.length 
+            spaceCount: mappedSpaces.length 
         });
 
         // Store admin data for subsequent login (simplified - no w3up re-auth needed)
@@ -249,7 +269,7 @@ export async function handleSubsequentLogin(email, did) {
             message: 'Subsequent login successful',
             sessionId,
             did: did,
-            spaces: adminSpaces
+            spaces: mappedSpaces
         };
 
     } catch (error) {
@@ -262,7 +282,7 @@ export async function handleSubsequentLogin(email, did) {
  * Unified login function that handles both initial and subsequent logins
  */
 export async function handleAdminLogin(email, did) {
-    logger.info('Handling admin login', { email, did });
+    logger.info('Handling admin login with secure mapping', { email, did });
     
     if (!email || !did) {
         throw new Error('Both email and DID are required for login');
@@ -278,11 +298,11 @@ export async function handleAdminLogin(email, did) {
 
         if (!existingMapping) {
             // This is an initial login - need to authenticate with Storacha
-            logger.info('Performing initial login with Storacha', { email, did });
+            logger.info('Performing initial login with Storacha and secure space mapping', { email, did });
             return await requestAdminLoginViaW3Up(email, did);
         } else {
             // This is a subsequent login - just validate and create session
-            logger.info('Performing subsequent login', { email, did });
+            logger.info('Performing subsequent login with secure mapping', { email, did });
             return await handleSubsequentLogin(email, did);
         }
     } catch (error) {
