@@ -23,6 +23,7 @@ import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
 import { logger } from '../lib/logger.js';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
+import { getDelegationsForUser } from '../lib/store.js';
 
 const router = express.Router();
 
@@ -32,7 +33,7 @@ const router = express.Router();
  * Returns all spaces that the user has access to, either as an admin or through delegations.
  * The isAdmin flag indicates whether the user has admin privileges for each space.
  * 
- * Authentication: Required via x-user-did header
+ * Authentication: Required via x-session-id header
  * 
  * Response format:
  * [
@@ -43,14 +44,8 @@ const router = express.Router();
  *   }
  * ]
  */
-router.get('/', async (req, res) => {
-    const userDid = req.headers['x-user-did'];
-
-    if (!userDid) {
-        return res.status(400).json({ 
-            message: 'x-user-did header is required' 
-        });
-    }
+router.get('/', ensureAuthenticated, async (req, res) => {
+    const userDid = req.userDid; // from session via ensureAuthenticated middleware
 
     try {
         // Validate the DID format
@@ -64,9 +59,9 @@ router.get('/', async (req, res) => {
         const adminEmail = await SpaceService.getAdminEmailFromDid(userDid);
         let spaces = [];
 
-        // If user is an admin, get their admin spaces
+        // If user is an admin, get their explicitly mapped admin spaces
         if (adminEmail) {
-            logger.info('Getting admin spaces', { adminEmail });
+            logger.info('Getting explicitly mapped admin spaces', { adminEmail });
             const adminSpaces = await SpaceService.getSpaces(adminEmail);
             spaces.push(...adminSpaces); // These already have isAdmin: true
         }
