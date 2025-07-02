@@ -27,7 +27,7 @@ import uploadRoutes from './routes/uploadRoutes.js';
 import { logger } from './lib/logger.js';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
 // Enable CORS for cross-origin requests from web clients
 app.use(cors());
@@ -116,28 +116,30 @@ async function main() {
         logger.info('Upload routes mounted');
 
         // Start HTTP server and listen for incoming connections
-        const server = app.listen(port, () => {
-            logger.info('Server started', { port });
-        });
-
-        // Graceful shutdown handlers - ensures proper cleanup when server is terminated
-        // SIGTERM is typically sent by process managers like PM2 or Docker
-        process.on('SIGTERM', () => {
-            logger.info('SIGTERM received, shutting down gracefully');
-            server.close(() => {
-                closeDatabase();
-                process.exit(0);
+        if (process.env.NODE_ENV !== 'test') {
+            const server = app.listen(PORT, () => {
+                logger.info('Server started', { port: PORT });
             });
-        });
 
-        // SIGINT is sent when user presses Ctrl+C
-        process.on('SIGINT', () => {
-            logger.info('SIGINT received, shutting down gracefully');
-            server.close(() => {
-                closeDatabase();
-                process.exit(0);
+            // Graceful shutdown handlers - ensures proper cleanup when server is terminated
+            // SIGTERM is typically sent by process managers like PM2 or Docker
+            process.on('SIGTERM', () => {
+                logger.info('SIGTERM received, shutting down gracefully');
+                server.close(() => {
+                    closeDatabase();
+                    process.exit(0);
+                });
             });
-        });
+
+            // SIGINT is sent when user presses Ctrl+C
+            process.on('SIGINT', () => {
+                logger.info('SIGINT received, shutting down gracefully');
+                server.close(() => {
+                    closeDatabase();
+                    process.exit(0);
+                });
+            });
+        }
 
     } catch (error) {
         logger.error('Server initialization failed', { error: error.message });
@@ -161,4 +163,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Start the application
-main(); 
+main();
+
+export { app }; 
