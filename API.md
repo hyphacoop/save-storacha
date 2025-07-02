@@ -10,9 +10,9 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| POST | /auth/login | Unified login (email + DID) |
+| POST | /auth/login | Initiates an asynchronous login. |
 | POST | /auth/login/did | Admin login via DID only |
-| GET  | /auth/session | Validate session |
+| GET  | /auth/session | Validate session and check verification status. |
 | POST | /auth/logout | End session |
 | POST | /auth/w3up/logout | Logout from w3up service |
 | GET  | /auth/sessions | List sessions |
@@ -33,7 +33,9 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 ## Authentication
 
 ### POST /auth/login
-Unified login endpoint (email + DID required).
+Initiates a unified, asynchronous login for an admin user using their email and DID.
+
+This endpoint starts the login process and returns immediately with a session ID. The email verification and account setup happen in the background. Clients should use the `GET /auth/session` endpoint to poll for the completion of the verification process.
 
 **Request:**
 ```bash
@@ -45,12 +47,25 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:3000/auth/login
 ```
 
-**Response:**
+**Response (Initial Login):**
+For a first-time login, the server returns an unverified session.
 ```json
 {
-  "message": "Login successful",
+  "message": "Login initiated. Please verify your email. Poll the session endpoint for completion.",
   "sessionId": "your-session-id",
-  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "verified": false
+}
+```
+
+**Response (Subsequent Login):**
+For a returning user who has already verified, the server returns an already-verified session.
+```json
+{
+  "message": "Subsequent login successful",
+  "sessionId": "your-session-id",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "verified": true
 }
 ```
 
@@ -76,7 +91,7 @@ curl -X POST -H "Content-Type: application/json" \
 ```
 
 ### GET /auth/session
-Validate session.
+Validates a session ID and checks its verification status. Clients should poll this endpoint after calling `/auth/login` to see when the `verified` flag becomes `true`.
 
 **Request:**
 ```bash
@@ -84,10 +99,21 @@ curl -H "x-session-id: your-session-id" \
   http://localhost:3000/auth/session
 ```
 
-**Response:**
+**Response (Not Yet Verified):**
 ```json
 {
   "valid": true,
+  "verified": false,
+  "expiresAt": "2024-03-21T12:00:00.000Z",
+  "message": "Session is valid"
+}
+```
+
+**Response (Verified):**
+```json
+{
+  "valid": true,
+  "verified": true,
   "expiresAt": "2024-03-21T12:00:00.000Z",
   "message": "Session is valid"
 }
@@ -520,7 +546,8 @@ curl -X POST -H "Content-Type: application/json" \
 {
   "message": "Login successful",
   "sessionId": "00b3d659c3816cd3ea8ffd6b6cdf8f8a",
-  "did": "did:key:example-admin-did"
+  "did": "did:key:example-admin-did",
+  "verified": true
 }
 ```
 
@@ -796,23 +823,4 @@ All endpoints may return the following error responses:
 - `x-user-did`: User DID (required for user operations)
 
 ### Content Headers
-- `Content-Type: application/json`: For JSON requests
-- `Content-Type: multipart/form-data`: For file uploads
-
-## Rate Limiting
-
-The API implements rate limiting:
-- **General requests**: 100 requests per 15 minutes per IP
-- **Upload requests**: 10 uploads per hour per IP
-
-Rate limit information is returned in the `RateLimit-*` headers.
-
-## Pagination
-
-The `/uploads` endpoint supports pagination:
-- `cursor`: For pagination (optional)
-- `size`: Page size (default: 25, optional)
-
-## Versioning
-
-The API is currently in version 1.0. Future versions will be versioned through URL paths (e.g., `/v2/`) or headers. 
+- `
