@@ -54,6 +54,13 @@ export async function initializeDatabase() {
     const db = new Database(DB_PATH, { verbose: logger.debug });
     logger.info('Database initialized', { path: DB_PATH });
 
+    try {
+        await fs.chmod(DB_PATH, 0o664); // Set read/write permissions
+        logger.info('Set database file permissions', { path: DB_PATH });
+    } catch (error) {
+        logger.warn('Could not set database file permissions', { error: error.message });
+    }
+
     // Enable foreign key constraints for referential integrity
     // This ensures proper data relationships and prevents orphaned records
     db.pragma('foreign_keys = ON');
