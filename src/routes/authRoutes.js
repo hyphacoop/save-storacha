@@ -172,6 +172,7 @@ router.get('/session', (req, res) => {
 
     res.json({ 
         valid: true,
+        verified: session.isVerified,
         expiresAt: new Date(session.expiresAt).toISOString(),
         message: 'Session is valid'
     });
