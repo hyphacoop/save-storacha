@@ -4,7 +4,8 @@ import {
     storeAdminServiceDidData,
     storeCachedSpaces,
     storeAdminSpace,
-    getAdminSpaces
+    getAdminSpaces,
+    updateSessionVerification
 } from '../lib/store.js';
 import * as Signer from '@ucanto/principal/ed25519';
 import { CarWriter } from '@ipld/car';
@@ -73,12 +74,13 @@ export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client,
  * Initial login with email + DID
  * This establishes the Storacha account and automatically gets only the spaces that belong to that account
  * Uses fresh w3up client to ensure admin isolation
+ * This function is now designed to be called in the background.
  */
-export async function requestAdminLoginViaW3Up(email, did) {
-    logger.info('🔍 FRESH LOGIN - Starting admin login with automatic space isolation', { email, did });
+export async function requestAdminLoginViaW3Up(email, did, sessionId) {
+    logger.info('🔍 BACKGROUND LOGIN - Starting admin login with automatic space isolation', { email, did, sessionId });
     
-    if (!email || !did) {
-        throw new Error('Both email and DID are required for initial login');
+    if (!email || !did || !sessionId) {
+        throw new Error('Email, DID, and SessionId are required for background login processing');
     }
 
     // Create a fresh w3up client for this admin login
@@ -183,30 +185,26 @@ export async function requestAdminLoginViaW3Up(email, did) {
             spaceNames: spacesList.map(s => s.name)
         });
         
-        // Step 8: Store admin data and create session
-        const adminDid = freshClient.agent.did();
-        const authResult = await handleAdminW3UpAuthorization(email, adminDid, freshClient, did);
+        // Step 8: Update session to mark as verified
+        updateSessionVerification(sessionId, true);
         
-        if (authResult.error) {
-            throw new Error(authResult.error);
-        }
-        
-        logger.info('🔍 SUCCESS - Admin login completed with automatic space assignment', {
+        logger.info('✅ BACKGROUND SUCCESS - Admin login completed and session verified', {
             email,
-            spacesAssigned: spacesList.length,
-            sessionId: authResult.sessionId
+            sessionId,
+            spacesAssigned: spacesList.length
         });
         
         return { 
             message: 'Login successful - spaces automatically assigned from account',
-            sessionId: authResult.sessionId,
+            sessionId: sessionId,
             did: did,
             spaces: spacesList,
             spacesAssigned: spacesList.length
         };
     } catch (error) {
-        logger.error('Fresh admin login failed', { email, error: error.message });
-        throw error;
+        logger.error('Background admin login failed', { email, sessionId, error: error.message });
+        // Optionally, you could update the session to mark it as failed
+        updateSessionVerification(sessionId, false);
     }
 }
 
@@ -221,61 +219,38 @@ export async function handleSubsequentLogin(email, did) {
         throw new Error('Both email and DID are required for login');
     }
 
-    try {
-        // Verify the DID exists in our system
-        const db = getDatabase();
-        const mapping = db.prepare(`
-            SELECT email FROM did_email_mapping 
-            WHERE did = ? AND email = ?
-        `).get(did, email);
+    // Verify the DID exists in our system
+    const db = getDatabase();
+    const mapping = db.prepare(`
+        SELECT email FROM did_email_mapping 
+        WHERE did = ? AND email = ?
+    `).get(did, email);
 
-        if (!mapping) {
-            throw new Error('No account found for this DID and email combination. Please complete initial login first.');
-        }
-
-        // Check if there's an active session for this email
-        const activeSession = db.prepare(`
-            SELECT sessionId FROM active_account_sessions 
-            WHERE email = ? 
-            ORDER BY createdAt DESC LIMIT 1
-        `).get(email);
-
-        if (activeSession) {
-            // Reuse existing session
-            logger.info('Reusing existing session for subsequent login', { did, email });
-            return {
-                message: 'Subsequent login successful',
-                sessionId: activeSession.sessionId,
-                did: did
-            };
-        }
-
-        // Load only explicitly mapped spaces for this admin
-        // Never show spaces that haven't been explicitly mapped
-        const mappedSpaces = getAdminSpaces(email);
-        logger.info('Loaded explicitly mapped spaces for subsequent login', { 
-            email, 
-            spaceCount: mappedSpaces.length 
-        });
-
-        // Store admin data for subsequent login (simplified - no w3up re-auth needed)
-        storeAdminServiceDidData(email, did, null, null);
-        
-        // Create a new session for this DID
-        const { sessionId } = createSession(email, did);
-        logger.info('Created new session for subsequent login', { did, email });
-        
-        return {
-            message: 'Subsequent login successful',
-            sessionId,
-            did: did,
-            spaces: mappedSpaces
-        };
-
-    } catch (error) {
-        logger.error('Subsequent login failed', { did, email, error: error.message });
-        throw error;
+    if (!mapping) {
+        throw new Error('No account found for this DID and email combination. Please complete initial login first.');
     }
+
+    // Load only explicitly mapped spaces for this admin
+    const mappedSpaces = getAdminSpaces(email);
+    logger.info('Loaded explicitly mapped spaces for subsequent login', { 
+        email, 
+        spaceCount: mappedSpaces.length 
+    });
+
+    // Store admin data for subsequent login (simplified - no w3up re-auth needed)
+    storeAdminServiceDidData(email, did, null, null);
+    
+    // Create a new session for this DID - it's a subsequent login, so it's already verified
+    const { sessionId } = createSession(email, did, {}, true);
+    logger.info('Created new verified session for subsequent login', { did, email });
+    
+    return {
+        message: 'Subsequent login successful',
+        sessionId,
+        did: did,
+        spaces: mappedSpaces,
+        verified: true
+    };
 }
 
 /**
@@ -288,26 +263,41 @@ export async function handleAdminLogin(email, did) {
         throw new Error('Both email and DID are required for login');
     }
 
-    try {
-        // Check if this is an initial login (no DID-email mapping exists)
-        const db = getDatabase();
-        const existingMapping = db.prepare(`
-            SELECT email FROM did_email_mapping 
-            WHERE did = ? AND email = ?
-        `).get(did, email);
+    const db = getDatabase();
+    const existingMapping = db.prepare(`
+        SELECT email FROM did_email_mapping 
+        WHERE did = ? AND email = ?
+    `).get(did, email);
 
-        if (!existingMapping) {
-            // This is an initial login - need to authenticate with Storacha
-            logger.info('Performing initial login with Storacha and secure space mapping', { email, did });
-            return await requestAdminLoginViaW3Up(email, did);
-        } else {
-            // This is a subsequent login - just validate and create session
-            logger.info('Performing subsequent login with secure mapping', { email, did });
-            return await handleSubsequentLogin(email, did);
-        }
-    } catch (error) {
-        logger.error('Admin login failed', { email, did, error: error.message });
-        throw error;
+    if (!existingMapping) {
+        // This is an initial login.
+        logger.info('Performing initial login. Creating unverified session and starting background verification.', { email, did });
+        
+        // 1. Create a session immediately, marked as not verified.
+        const { sessionId } = createSession(email, did, {}, false);
+
+        // 2. Trigger the long-running verification process in the background.
+        requestAdminLoginViaW3Up(email, did, sessionId).catch(error => {
+            logger.error('Unhandled error in background login process', {
+                email,
+                sessionId,
+                error: error.message
+            });
+            updateSessionVerification(sessionId, false);
+        });
+
+        // 3. Return the session ID to the client.
+        return {
+            message: 'Login initiated. Please verify your email. Poll the session endpoint for completion.',
+            sessionId: sessionId,
+            did: did,
+            verified: false // Explicitly tell the client the session is not yet verified
+        };
+
+    } else {
+        // This is a subsequent login - just validate and create a (verified) session
+        logger.info('Performing subsequent login with secure mapping', { email, did });
+        return handleSubsequentLogin(email, did);
     }
 }
 
