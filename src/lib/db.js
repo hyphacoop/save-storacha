@@ -25,7 +25,7 @@ import { logger } from './logger.js';
 
 // Database file location - stored in a dedicated data directory
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'delegations.db');
-const MIGRATIONS_DIR = path.join(process.cwd(), 'migrations');
+const SCHEMA_DIR = path.join(process.cwd(), 'db');
 
 /**
  * Ensures the data directory exists before attempting database operations
@@ -43,9 +43,7 @@ async function ensureDataDir() {
 }
 
 /**
- * Initializes the database connection and applies any pending migrations
- * This function sets up the database with proper configuration including
- * foreign key constraints and creates the migration tracking table
+ * Initializes the database connection 
  */
 export async function initializeDatabase() {
     await ensureDataDir();
@@ -54,64 +52,39 @@ export async function initializeDatabase() {
     const db = new Database(DB_PATH, { verbose: logger.debug });
     logger.info('Database initialized', { path: DB_PATH });
 
+    try {
+        await fs.chmod(DB_PATH, 0o664); // Set read/write permissions
+        logger.info('Set database file permissions', { path: DB_PATH });
+    } catch (error) {
+        logger.warn('Could not set database file permissions', { error: error.message });
+    }
+
     // Enable foreign key constraints for referential integrity
     // This ensures proper data relationships and prevents orphaned records
     db.pragma('foreign_keys = ON');
 
-    // Create migrations tracking table to manage schema evolution
-    // This table keeps track of which migrations have been applied
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS migrations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            applied_at INTEGER NOT NULL
-        )
-    `);
-
-    // Apply any pending migrations to bring schema up to date
-    await runMigrations(db);
+    // Apply the consolidated schema
+    await applySchema(db);
 
     return db;
 }
 
 /**
- * Migration system for managing database schema changes
- * Reads SQL migration files from the migrations directory and applies them
- * in alphabetical order, tracking which migrations have been applied
- * to prevent duplicate execution
+ * Applies the consolidated database schema from a single file.
+ * This replaces the old migration system, simplifying schema management.
  */
-async function runMigrations(db) {
+async function applySchema(db) {
+    const schemaPath = path.join(SCHEMA_DIR, 'schema.sql');
     try {
-        // Get list of already applied migrations from the database
-        const applied = db.prepare('SELECT name FROM migrations').all().map(m => m.name);
-        
-        // Get list of migration files from the filesystem
-        const files = await fs.readdir(MIGRATIONS_DIR);
-        const pending = files
-            .filter(f => f.endsWith('.sql'))  // Only process SQL files
-            .sort()                           // Apply in alphabetical order
-            .filter(f => !applied.includes(f)); // Skip already applied migrations
-
-        // Apply each pending migration in a transaction
-        for (const file of pending) {
-            const migrationPath = path.join(MIGRATIONS_DIR, file);
-            const sql = await fs.readFile(migrationPath, 'utf8');
-            
-            // Use transaction to ensure atomic migration application
-            db.transaction(() => {
-                db.exec(sql);
-                db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)')
-                    .run(file, Date.now());
-            })();
-            
-            logger.info('Applied migration', { file });
-        }
+        const sql = await fs.readFile(schemaPath, 'utf8');
+        db.exec(sql);
+        logger.info('Applied consolidated database schema', { file: 'schema.sql' });
     } catch (error) {
         if (error.code === 'ENOENT') {
-            // No migrations directory is acceptable for simple deployments
-            logger.info('No migrations directory found, skipping migrations');
+            logger.warn('schema.sql not found, skipping database setup. This might be an issue.');
             return;
         }
+        logger.error('Failed to apply database schema', { error: error.message });
         throw error;
     }
 }

@@ -77,7 +77,7 @@ export function getAdminData(email) {
  * Includes automatic expiration and cleanup.
  */
 
-export function createSession(email, adminDid = null, metadata = {}) {
+export function createSession(email, adminDid = null, metadata = {}, isVerified = false) {
     const sessionId = crypto.randomBytes(16).toString('hex');
     const now = Date.now();
     const expiresAt = now + SESSION_DURATION;
@@ -88,8 +88,8 @@ export function createSession(email, adminDid = null, metadata = {}) {
         db.prepare(`
             INSERT INTO account_sessions (
                 sessionId, email, did, createdAt, lastActiveAt, 
-                expiresAt, userAgent, ipAddress, isActive
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true)
+                expiresAt, userAgent, ipAddress, isActive, isVerified
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?)
         `).run(
             sessionId, 
             email, 
@@ -98,7 +98,8 @@ export function createSession(email, adminDid = null, metadata = {}) {
             now,
             expiresAt,
             metadata.userAgent,
-            metadata.ipAddress
+            metadata.ipAddress,
+            isVerified ? 1 : 0
         );
         
         logger.info('Created session', { 
@@ -121,7 +122,8 @@ export function createSession(email, adminDid = null, metadata = {}) {
         expiresAt, 
         adminDid,
         lastActiveAt: now,
-        isActive: true
+        isActive: true,
+        isVerified
     });
     
     return { sessionId, expiresAt };
@@ -140,7 +142,7 @@ export function getSession(sessionId) {
     try {
         const db = getDatabase();
         const session = db.prepare(`
-            SELECT email, did as adminDid, expiresAt, isActive
+            SELECT email, did as adminDid, expiresAt, isActive, isVerified
             FROM active_account_sessions
             WHERE sessionId = ?
         `).get(sessionId);
@@ -151,9 +153,13 @@ export function getSession(sessionId) {
             // Update memory store
             sessionStore.set(sessionId, {
                 ...session,
+                isVerified: !!session.isVerified, // Ensure boolean
                 lastActiveAt: Date.now()
             });
-            return session;
+            return {
+                ...session,
+                isVerified: !!session.isVerified
+            };
         }
 
         // If session exists but is expired or inactive, clean it up
@@ -884,5 +890,33 @@ export function isAdminSpaceOwner(adminEmail, spaceDid) {
             error: error.message 
         });
         return false;
+    }
+}
+
+// New function to update a session's verification status
+export function updateSessionVerification(sessionId, isVerified) {
+    try {
+        const db = getDatabase();
+        db.prepare(`
+            UPDATE account_sessions 
+            SET isVerified = ? 
+            WHERE sessionId = ?
+        `).run(isVerified ? 1 : 0, sessionId);
+
+        const session = sessionStore.get(sessionId);
+        if (session) {
+            session.isVerified = isVerified;
+            sessionStore.set(sessionId, session);
+        }
+
+        logger.info('Updated session verification status', { 
+            sessionId,
+            isVerified 
+        });
+    } catch (error) {
+        logger.error('Failed to update session verification status', { 
+            sessionId, 
+            error: error.message 
+        });
     }
 } 

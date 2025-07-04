@@ -98,7 +98,7 @@ For detailed API documentation including request/response formats, examples, and
 ### Available Endpoints
 
 #### Authentication
-- `POST /auth/login` - Unified login with email and DID (recommended)
+- `POST /auth/login` - Initiates an asynchronous login with email and DID.
 - `POST /auth/login/did` - Admin login with DID only
 - `POST /auth/login/email` - Email validation (deprecated)
 - `GET /auth/session` - Validate session
@@ -157,9 +157,18 @@ sequenceDiagram
     participant UserApp
 
     rect rgb(46,46,46)
-        note over AdminApp,TokenSvc: bootstrap space
+        note over AdminApp,TokenSvc: bootstrap space (async login)
         AdminApp->>TokenSvc: POST /auth/login
-        TokenSvc-->>AdminApp: 200 OK
+        TokenSvc-->>AdminApp: 200 OK (sessionId, verified: false)
+        
+        loop Poll for verification
+            AdminApp->>TokenSvc: GET /auth/session
+            TokenSvc-->>AdminApp: 200 OK (verified: false)
+        end
+
+        AdminApp->>TokenSvc: GET /auth/session
+        TokenSvc-->>AdminApp: 200 OK (verified: true)
+
         AdminApp->>TokenSvc: POST /delegations/create
         TokenSvc-->>AdminApp: 201 CREATED
     end
@@ -187,8 +196,8 @@ sequenceDiagram
 ### Admin journey
 1. Creates an account on Storacha
 2. Logs in with email and DID (w3up protocol)
-   - First time: Provides both email and DID
-   - Subsequent logins: Can use either email+DID or just DID
+   - First time: Provides both email and DID, then polls for verification.
+   - Subsequent logins: Can use either email+DID or just DID for an immediate verified session.
 3. Selects a space
 4. Delegates upload capabilities to users
 

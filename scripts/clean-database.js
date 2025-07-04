@@ -1,35 +1,25 @@
-import { setupDatabase, closeDatabase } from '../src/lib/db.js';
+import fs from 'fs/promises';
+import path from 'path';
 import { logger } from '../src/lib/logger.js';
+
+// The path to the database file, consistent with src/lib/db.js
+const DB_PATH = path.join(process.cwd(), 'data', 'delegations.db');
 
 async function cleanDatabase() {
     try {
-        logger.info('Starting database cleanup...');
+        logger.info(`Attempting to delete database file at: ${DB_PATH}`);
         
-        const db = await setupDatabase();
+        await fs.unlink(DB_PATH);
         
-        // Get all table names
-        const tables = db.prepare(`
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'migrations'
-        `).all();
-        
-        // Clear all tables except migrations
-        for (const table of tables) {
-            const tableName = table.name;
-            logger.info(`Clearing table: ${tableName}`);
-            db.prepare(`DELETE FROM ${tableName}`).run();
-        }
-        
-        // Reset auto-increment sequences
-        db.prepare(`DELETE FROM sqlite_sequence WHERE name IN (${tables.map(() => '?').join(', ')})`).run(...tables.map(t => t.name));
-        
-        logger.info('Database cleanup completed successfully');
-        
-        closeDatabase();
+        logger.info('Database file deleted successfully.');
         
     } catch (error) {
-        logger.error('Database cleanup failed', { error: error.message });
-        throw error;
+        if (error.code === 'ENOENT') {
+            logger.info('Database file not found, nothing to delete. This is normal if running for the first time.');
+        } else {
+            logger.error('Database cleanup failed', { error: error.message });
+            throw error;
+        }
     }
 }
 
