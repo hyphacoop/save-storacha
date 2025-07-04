@@ -33,13 +33,3 @@ pids
 
 # OS
 .DS_Store
-Thumbs.db
-
-# Coverage
-coverage/
-
-# Dev cache
-.dev-cache/
-
-# Admin credentials
-admin-credentials.json 
