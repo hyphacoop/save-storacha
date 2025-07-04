@@ -36,39 +36,24 @@ export async function getSpaces(adminEmail) {
         throw new Error('Admin email is required to fetch spaces.');
     }
 
-    const adminData = getAdminData(adminEmail);
-    if (!adminData) {
+    const db = getDatabase();
+    const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+
+    if (!adminAgent || !adminAgent.agentData) {
         throw new Error('Cannot fetch spaces: Missing admin data record. Admin needs to complete the login process.');
     }
 
     try {
-        // Get spaces from database that are owned by this admin
-        // This ensures proper isolation between admins
-        const adminSpaces = getAdminSpaces(adminEmail);
+        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        const spaces = await client.spaces();
         
-        if (adminSpaces.length > 0) {
-            console.log(`Found ${adminSpaces.length} spaces owned by ${adminEmail} in database`);
-            // Add isAdmin flag based on actual admin status
-            return adminSpaces.map(space => ({
-                ...space,
-                isAdmin: isAdminSpaceOwner(adminEmail, space.did)
-            }));
-        }
+        const spacesList = spaces.map(space => ({
+            did: space.did(),
+            name: space.name || space.did(),
+            isAdmin: true 
+        }));
 
-        // If no spaces in database, check if we have cached spaces for this admin
-        // This is a fallback for backward compatibility
-        const cachedSpaces = getCachedSpaces(adminEmail);
-        if (cachedSpaces && cachedSpaces.length > 0) {
-            console.log(`Using cached spaces data for ${adminEmail} (${cachedSpaces.length} spaces) - FALLBACK`);
-            return cachedSpaces.map(space => ({
-                ...space,
-                isAdmin: isAdminSpaceOwner(adminEmail, space.did)
-            }));
-        }
-
-        // If no spaces found, return empty array
-        console.log(`No spaces found for ${adminEmail}`);
-        return [];
+        return spacesList;
 
     } catch (error) {
         console.error(`Error fetching spaces for ${adminEmail}:`, error);
