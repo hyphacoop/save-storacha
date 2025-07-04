@@ -242,20 +242,9 @@ router.get('/bridge-tokens', async (req, res) => {
                 'Authorization': headers['Authorization'].substring(0, 100) + '...'
             });
             
-            // Generate and log curl command
-            const curlCommand = `curl -X POST \\
-  -H "X-Auth-Secret: ${headers['X-Auth-Secret']}" \\
-  -H "Authorization: ${headers['Authorization']}" \\
-  -F "file=@/path/to/your/file.txt" \\
-  https://up.storacha.network/bridge`;
-            
-            logger.info('[bridge-tokens] 🧪 Test with curl:');
-            logger.info('[bridge-tokens] ' + curlCommand);
-            
+            // Client is responsible for constructing the upload request (e.g., via curl) using these headers.
             res.json({ 
-                headers,
-                curlCommand,
-                note: 'Replace /path/to/your/file.txt with actual file path for testing'
+                headers
             });
             
         } catch (err) {
