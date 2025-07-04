@@ -1,7 +1,7 @@
 import express from 'express';
 import { ensureAuthenticated } from './authRoutes.js';
 import { logger } from '../lib/logger.js';
-import { getClient } from '../lib/w3upClient.js';
+import { getClient, getAdminClient } from '../lib/w3upClient.js';
 import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
 import { parse as parseDID } from '@ipld/dag-ucan/did';
@@ -9,6 +9,7 @@ import { Signer } from '@ucanto/principal/ed25519';
 import { ed25519 } from '@ucanto/principal';
 import { sha256 } from '@ucanto/core';
 import { storeDelegation, getDelegationsForUser, getDelegationsForSpace, storeUserPrincipal, revokeDelegation } from '../lib/store.js';
+import { getDatabase } from '../lib/db.js';
 
 const router = express.Router();
 
@@ -31,11 +32,16 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
             expiresIn
         });
 
-        // Get the w3up client
-        const client = getClient();
-        if (!client) {
-            throw new Error('w3up client not initialized');
+        // Get the w3up client for the currently authenticated admin
+        const db = getDatabase();
+        const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+        if (!adminAgent || !adminAgent.agentData) {
+            throw new Error('Admin agent not found or not properly configured.');
         }
+        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+
+        // Set the current space for the client
+        await client.setCurrentSpace(spaceDid);
 
         // Generate (or retrieve) a principal for the user using the same method as token generation
         const secretBytes = new TextEncoder().encode(userDid);
