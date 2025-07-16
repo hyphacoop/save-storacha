@@ -49,6 +49,14 @@ const flexibleAuth = (req, res, next) => {
         if (!session) {
             return res.status(401).json({ message: 'Invalid or expired session' });
         }
+        
+        // Check if session is verified for admin access
+        if (!session.isVerified) {
+            return res.status(403).json({ 
+                message: 'Session not verified. Please complete email verification before accessing spaces.' 
+            });
+        }
+        
         // Admin user authenticated via session
         req.userEmail = session.email;
         req.userDid = session.adminDid;
