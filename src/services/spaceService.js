@@ -1,6 +1,6 @@
 import { create as createClient } from '@storacha/client'; // Renamed to avoid conflict
 import { StoreMemory } from '@storacha/client/stores/memory'; // Import StoreMemory
-import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner } from '../lib/store.js';
+import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner, storeCachedSpaces } from '../lib/store.js';
 import { getDelegationsForUser } from '../lib/store.js';
 import { CarReader } from '@ipld/car/reader';
 import { importDAG } from '@ucanto/core/delegation';
@@ -115,11 +115,14 @@ export async function getSpacesWithSync(adminEmail) {
             }
         }
 
-        // Step 5: Return combined spaces (cached + newly synced)
-        // Re-fetch from database to get the updated list
-        const updatedCachedSpaces = getAdminSpaces(adminEmail);
-        
-        return updatedCachedSpaces;
+        // Step 5: Update in-memory cache with the fresh service data
+        // This ensures consistency between database and memory cache
+        storeCachedSpaces(adminEmail, serviceSpacesList);
+        console.log(`Updated in-memory cache for ${adminEmail} with ${serviceSpacesList.length} spaces`);
+
+        // Step 6: Return combined spaces with isAdmin flag
+        // Use the service spaces list which has the isAdmin flag set
+        return serviceSpacesList;
 
     } catch (error) {
         console.error(`Error fetching spaces with sync for ${adminEmail}:`, error);
