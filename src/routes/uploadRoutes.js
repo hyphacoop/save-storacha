@@ -4,8 +4,8 @@ import { CarReader } from '@ipld/car/reader';
 import { getDelegationsForUser, getUserPrincipal } from '../lib/store.js';
 import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
-import { StoreMemory } from '@web3-storage/w3up-client/stores/memory';
-import { create as createW3upClient } from '@web3-storage/w3up-client';
+import { StoreMemory } from '@storacha/client/stores/memory';
+import { create as createW3upClient } from '@storacha/client';
 import { Blob } from 'buffer'; // Node.js Blob implementation
 import { filesFromPaths } from 'files-from-path';
 import { writeFile, unlink } from 'fs/promises';
