@@ -23,7 +23,12 @@ import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
 import { logger } from '../lib/logger.js';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
-import { getDelegationsForUser, getSession, getAdminSpaces } from '../lib/store.js';
+import { getDelegationsForUser, getSession, getAdminSpaces, getUserPrincipal } from '../lib/store.js';
+import { StoreMemory } from '@storacha/client/stores/memory';
+import { create } from '@storacha/client';
+import { CarReader } from '@ipld/car/reader';
+import { importDAG } from '@ucanto/core/delegation';
+import { base64 } from "multiformats/bases/base64";
 
 const router = express.Router();
 
@@ -265,26 +270,75 @@ router.get('/usage', flexibleAuth, async (req, res) => {
                 logger.info('Using global client for space usage (fallback)', { adminEmail });
             }
         } else {
-            // For delegated users, use global client
-            client = getClient();
-            logger.info('Using global client for delegated user space usage', { userDid });
+            // For delegated users, create user-specific client with principal and delegation
+            try {
+                // Get user principal
+                const userPrincipal = await getUserPrincipal(userDid);
+                if (!userPrincipal) {
+                    throw new Error('User principal not found');
+                }
+
+                // Create Storacha client with user principal
+                const store = new StoreMemory();
+                client = await create({ principal: userPrincipal, store });
+                logger.info('Using user-specific client for delegated user space usage', { userDid, clientDid: client.did() });
+
+                // Get delegation for this user and space
+                const delegations = getDelegationsForUser(userDid);
+                const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
+                if (spaceDelegations.length === 0) {
+                    throw new Error('No delegation found for this user and space');
+                }
+
+                const delegation = spaceDelegations[0];
+                
+                // Import and add the delegation proof
+                const delegationBytes = base64.decode(delegation.delegationCar);
+                const carReader = await CarReader.fromBytes(delegationBytes);
+                
+                // Get all blocks from the CAR file
+                const blocks = [];
+                const iterator = carReader.blocks();
+                for await (const block of iterator) {
+                    blocks.push(block);
+                }
+
+                // Import the delegation using the blocks
+                const importedDelegation = await importDAG(blocks);
+                if (!importedDelegation) {
+                    throw new Error('Failed to import delegation: importDAG returned null');
+                }
+                await client.addProof(importedDelegation);
+                logger.info('Added delegation proof to user client for space usage', { userDid, spaceDid });
+
+                // Add the delegation proof and explicitly set the requested space
+                await client.addSpace(importedDelegation);
+                await client.setCurrentSpace(spaceDid);
+                logger.info('Set current space for delegated user space usage', { userDid, spaceDid });
+
+            } catch (error) {
+                logger.error('Failed to create user-specific client for delegated user', { userDid, spaceDid, error: error.message });
+                throw new Error(`Failed to create user client: ${error.message}`);
+            }
         }
         
-        // Try to get the space from loaded spaces
-        let spaces = client.spaces();
-        let space = spaces.find(s => s.did() === spaceDid);
-        
-        // If not found, try to add/load the space
-        if (!space) {
-            try {
-                space = await client.addSpace(spaceDid);
-                logger.info('Loaded space using addSpace', { spaceDid });
-            } catch (err) {
-                logger.error('Failed to load space with addSpace', { spaceDid, error: err.message });
-                return res.status(404).json({ 
-                    message: 'Space not found and could not be loaded',
-                    spaceDid 
-                });
+        // For admin users, try to get the space from loaded spaces
+        if (userType === 'admin') {
+            let spaces = client.spaces();
+            let space = spaces.find(s => s.did() === spaceDid);
+            
+            // If not found, try to add/load the space
+            if (!space) {
+                try {
+                    space = await client.addSpace(spaceDid);
+                    logger.info('Loaded space using addSpace', { spaceDid });
+                } catch (err) {
+                    logger.error('Failed to load space with addSpace', { spaceDid, error: err.message });
+                    return res.status(404).json({ 
+                        message: 'Space not found and could not be loaded',
+                        spaceDid 
+                    });
+                }
             }
         }
 
