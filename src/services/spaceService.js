@@ -1,5 +1,5 @@
-import { create as createClient } from '@web3-storage/w3up-client'; // Renamed to avoid conflict
-import { StoreMemory } from '@web3-storage/w3up-client/stores/memory'; // Import StoreMemory
+import { create as createClient } from '@storacha/client'; // Renamed to avoid conflict
+import { StoreMemory } from '@storacha/client/stores/memory'; // Import StoreMemory
 import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner } from '../lib/store.js';
 import { getDelegationsForUser } from '../lib/store.js';
 import { CarReader } from '@ipld/car/reader';

@@ -29,9 +29,9 @@
   "dependencies": {
     "@ipld/car": "^5.4.2",
     "@ipld/dag-ucan": "^3.4.5",
+    "@storacha/client": "^1.4.2",
     "@ucanto/core": "^10.4.0",
     "@ucanto/principal": "^9.0.2",
-    "@web3-storage/w3up-client": "^17.3.0",
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
