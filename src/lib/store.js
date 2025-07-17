@@ -541,7 +541,7 @@ export function getDelegationsForUser(userDid) {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT spaceDid, delegationCid, delegationCar, createdAt, expiresAt
+            SELECT spaceDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             WHERE userDid = ?
             ORDER BY createdAt DESC
@@ -566,7 +566,7 @@ export function getDelegationsForSpace(spaceDid) {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT userDid, delegationCid, delegationCar, createdAt, expiresAt
+            SELECT userDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             WHERE spaceDid = ?
             ORDER BY createdAt DESC
@@ -650,7 +650,7 @@ export async function loadDelegationsFromDatabase() {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT userDid, spaceDid, delegationCid, delegationCar, createdAt, expiresAt
+            SELECT userDid, spaceDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             ORDER BY createdAt DESC
         `).all();

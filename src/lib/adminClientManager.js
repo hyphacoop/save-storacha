@@ -1,8 +1,8 @@
-import { create as createClient } from '@web3-storage/w3up-client';
-import { StoreMemory } from '@web3-storage/w3up-client/stores/memory';
+import { create as createClient } from '@storacha/client';
+import { StoreMemory } from '@storacha/client/stores/memory';
 import * as Signer from '@ucanto/principal/ed25519';
 import { logger } from './logger.js';
-import { Agent } from '@web3-storage/access';
+import { Agent } from '@storacha/access';
 
 const clientCache = new Map();
 
