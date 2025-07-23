@@ -24,8 +24,8 @@
 import { ed25519 } from '@ucanto/principal';
 import { sha256 } from '@ucanto/core';
 import { base64url } from 'multiformats/bases/base64';
-import { create as createClient } from '@web3-storage/w3up-client';
-import { StoreMemory } from '@web3-storage/access/stores/store-memory';
+import { create as createClient } from '@storacha/client';
+import { StoreMemory } from '@storacha/access/stores/store-memory';
 import { CarReader } from '@ipld/car/reader';
 import * as Delegation from '@ucanto/core/delegation';
 
