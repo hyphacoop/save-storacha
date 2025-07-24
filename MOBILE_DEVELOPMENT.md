@@ -344,7 +344,7 @@ For production use, consider these libraries:
 - **Swift**: `DIDKit`, `Base58Swift`
 - **Kotlin**: `did:key`, `Base58`
 
-## Next Steps
+### Next Steps
 
 Once you have generated a DID and can create CAR files, you can:
 
@@ -352,3 +352,136 @@ Once you have generated a DID and can create CAR files, you can:
 2. **For Users**: Share the DID with an admin for delegation
 3. **For Uploads**: Use the DID for authentication with the bridge API
 4. **For Files**: Convert any file to CAR format and upload directly 
+
+
+## DID-Based Authentication
+
+This section outlines how to authenticate using a `did:key` identity. The server will return a challenge string after login and the client signs with their Ed25519 private key.
+
+### Auth Flow Overview
+
+1. **Client sends** `POST /auth/login/` with `x-user-did` header.
+2. **Server responds** with a unique challenge message.
+3. **Client signs** the message using its Ed25519 private key.
+4. **Client sends** the signed message and DID to `/auth/verify/`.
+5. **Server verifies** signature and grants access.
+
+---
+
+### Swift (iOS)
+
+> ⚠️ Requires an Ed25519 signing key and a library like `CryptoKit`, `Base58Swift`, and optionally `DIDKit` for full support.
+
+```swift
+import Foundation
+import CryptoKit
+
+// Assume `privateKey` is securely stored/generated previously
+let privateKey = Curve25519.Signing.PrivateKey()
+let publicKey = privateKey.publicKey
+let userDID = "did:key:" + base58Encode(publicKey.rawRepresentation)
+
+// Step 1: Request challenge
+func requestChallenge() async throws -> String {
+    var request = URLRequest(url: URL(string: "https://your-server.com/auth/login/")!)
+    request.httpMethod = "POST"
+    request.setValue(userDID, forHTTPHeaderField: "x-user-did")
+
+    let (data, _) = try await URLSession.shared.data(for: request)
+    return String(data: data, encoding: .utf8)!
+}
+
+// Step 2: Sign challenge and verify
+func verifyChallenge(challenge: String) async throws {
+    let messageData = challenge.data(using: .utf8)!
+    let signature = try privateKey.signature(for: messageData)
+
+    let body = [
+        "did": userDID,
+        "signature": signature.base64EncodedString()
+    ]
+    let json = try JSONSerialization.data(withJSONObject: body)
+
+    var request = URLRequest(url: URL(string: "https://your-server.com/auth/verify/")!)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = json
+
+    let (data, _) = try await URLSession.shared.data(for: request)
+    print("Auth success: \(String(data: data, encoding: .utf8)!)")
+}
+```
+
+---
+
+### Kotlin (Android)
+
+> ⚠️ Requires Ed25519 key pair (e.g. from Bouncy Castle or Conscrypt) and base58/JSON libs.
+
+```kotlin
+import okhttp3.*
+import java.security.*
+import java.util.*
+import org.json.JSONObject
+
+val client = OkHttpClient()
+val keyPair: KeyPair = generateEd25519KeyPair()
+val userDID = "did:key:" + base58Encode(keyPair.public.encoded)
+
+// Step 1: Get challenge
+fun getChallenge(): String {
+    val request = Request.Builder()
+        .url("https://your-server.com/auth/login/")
+        .post(RequestBody.create(null, ByteArray(0)))
+        .addHeader("x-user-did", userDID)
+        .build()
+
+    val response = client.newCall(request).execute()
+    return response.body?.string() ?: throw Exception("Empty challenge")
+}
+
+// Step 2: Sign challenge and send verification
+fun verifyChallenge(challenge: String) {
+    val signature = signMessage(challenge.toByteArray(), keyPair.private)
+
+    val json = JSONObject()
+    json.put("did", userDID)
+    json.put("signature", Base64.getEncoder().encodeToString(signature))
+
+    val requestBody = RequestBody.create("application/json".toMediaTypeOrNull(), json.toString())
+    val request = Request.Builder()
+        .url("https://your-server.com/auth/verify/")
+        .post(requestBody)
+        .build()
+
+    val response = client.newCall(request).execute()
+    println("Auth success: ${response.body?.string()}")
+}
+
+// Util: Sign with Ed25519
+fun signMessage(message: ByteArray, privateKey: PrivateKey): ByteArray {
+    val signature = Signature.getInstance("Ed25519")
+    signature.initSign(privateKey)
+    signature.update(message)
+    return signature.sign()
+}
+```
+
+---
+
+### Server Expectations
+
+| Field           | Type   | Notes                                                      |
+|------------------|--------|------------------------------------------------------------|
+| `x-user-did`      | header | MUST match the DID derived from the public key            |
+| `challenge`       | string | Unique nonce returned by `/auth/login/`                  |
+| `signature`       | base64 | Ed25519 signature of the challenge message                |
+| `did`             | string | Included in `/auth/verify/` payload                       |
+
+---
+
+### Security Notes
+
+- Private key must be securely stored using system keystore or secure enclave.
+- The same key must be used to generate the DID and sign challenges.
+- Replay protection is enforced server-side by expiring challenges.
