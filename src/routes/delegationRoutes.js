@@ -249,10 +249,19 @@ router.delete('/revoke', ensureAuthenticated, async (req, res) => {
 // GET /delegations/get - Get delegation CAR for a user and space
 router.get('/get', async (req, res) => {
     const { userDid, spaceDid } = req.query;
+    const authenticatedUserDid = req.headers['x-user-did'];
 
     if (!userDid || !spaceDid) {
         return res.status(400).json({ 
             message: 'userDid and spaceDid query parameters are required' 
+        });
+    }
+
+    // Require authentication and ensure users can only access their own delegations
+    // to prevent enumeration of valid userDid/spaceDid combinations
+    if (!authenticatedUserDid || authenticatedUserDid !== userDid) {
+        return res.status(401).json({ 
+            message: 'Authentication required: x-user-did header must match userDid parameter' 
         });
     }
 
