@@ -63,7 +63,8 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
             'upload/list',          // List uploads capability
             'store/*',              // Storage operations
             'space/blob/add',       // Add blobs to space (required for uploads)
-            'space/index/add'       // Add to space index (required for uploads)
+            'space/index/add',      // Add to space index (required for uploads)
+            'usage/report'       
         ];
         const delegation = await client.createDelegation(
             userPrincipal,
