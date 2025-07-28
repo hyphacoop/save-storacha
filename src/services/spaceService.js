@@ -76,6 +76,15 @@ export async function getSpacesWithSync(adminEmail) {
     try {
         // Always fetch current spaces from storacha service
         const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        
+        // Ensure we have the latest delegations before fetching spaces
+        try {
+            await client.capability.access.claim();
+            console.log(`Refreshed delegations for admin: ${adminEmail}`);
+        } catch (error) {
+            console.warn(`Could not refresh delegations for admin ${adminEmail}, using cached info:`, error.message);
+        }
+        
         const serviceSpaces = await client.spaces();
         
         const serviceSpacesList = serviceSpaces.map(space => ({
