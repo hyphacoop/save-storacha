@@ -266,13 +266,10 @@ router.post('/sessions/:sessionId/deactivate', ensureAuthenticated, (req, res) =
     const { sessionId } = req.params;
     const session = getSession(sessionId);
     
-    if (!session) {
+    // Return same error for both non-existent sessions and unauthorized access
+    // to prevent session ID enumeration
+    if (!session || session.email !== req.userEmail) {
         return res.status(404).json({ message: 'Session not found' });
-    }
-    
-    // Ensure users can only deactivate their own sessions
-    if (session.email !== req.userEmail) {
-        return res.status(403).json({ message: 'Not authorized to deactivate this session' });
     }
     
     deactivateSession(sessionId);
