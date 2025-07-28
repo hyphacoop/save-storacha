@@ -23,7 +23,7 @@ import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
 import { logger } from '../lib/logger.js';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
-import { getDelegationsForUser, getSession } from '../lib/store.js';
+import { getDelegationsForUser, getSession, getAdminSpaces } from '../lib/store.js';
 
 const router = express.Router();
 
@@ -46,9 +46,13 @@ const flexibleAuth = (req, res, next) => {
     // If session ID is provided, authenticate as admin
     if (sessionId) {
         const session = getSession(sessionId);
-        if (!session) {
+        
+        // Return same error for both invalid sessions and unverified sessions
+        // to prevent disclosure of session validity
+        if (!session || !session.isVerified) {
             return res.status(401).json({ message: 'Invalid or expired session' });
         }
+        
         // Admin user authenticated via session
         req.userEmail = session.email;
         req.userDid = session.adminDid;
@@ -107,9 +111,9 @@ router.get('/', flexibleAuth, async (req, res) => {
         if (userType === 'admin') {
             const adminEmail = req.userEmail;
             
-            // Get explicitly mapped admin spaces
+            // Get admin spaces using dual technique (cache + service sync)
             logger.info('Getting admin spaces for authenticated admin', { adminEmail, userDid });
-            const adminSpaces = await SpaceService.getSpaces(adminEmail);
+            const adminSpaces = await SpaceService.getSpacesWithSync(adminEmail);
             spaces.push(...adminSpaces); // These already have isAdmin: true
 
             // Also get any delegated spaces for this admin's DID
@@ -212,7 +216,7 @@ router.get('/usage', flexibleAuth, async (req, res) => {
             logger.info('Space usage request received from admin', { adminEmail, userDid, spaceDid });
             
             // Check if admin has access to this space
-            const adminSpaces = await SpaceService.getSpaces(adminEmail);
+            const adminSpaces = getAdminSpaces(adminEmail);
             const hasAdminAccess = adminSpaces.some(space => space.did === spaceDid);
             
             // Also check delegated access
@@ -366,7 +370,7 @@ router.get('/account-usage', ensureAuthenticated, async (req, res) => {
         }
         
         // Get all spaces for the admin
-        const spaces = await SpaceService.getSpaces(adminEmail);
+        const spaces = getAdminSpaces(adminEmail);
         if (!spaces || spaces.length === 0) {
             return res.json({
                 totalUsage: {

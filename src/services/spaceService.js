@@ -1,6 +1,6 @@
 import { create as createClient } from '@storacha/client'; // Renamed to avoid conflict
 import { StoreMemory } from '@storacha/client/stores/memory'; // Import StoreMemory
-import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner } from '../lib/store.js';
+import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner, storeCachedSpaces } from '../lib/store.js';
 import { getDelegationsForUser } from '../lib/store.js';
 import { CarReader } from '@ipld/car/reader';
 import { importDAG } from '@ucanto/core/delegation';
@@ -57,6 +57,70 @@ export async function getSpaces(adminEmail) {
 
     } catch (error) {
         console.error(`Error fetching spaces for ${adminEmail}:`, error);
+        throw new Error(`Failed to fetch spaces: ${error.message}`);
+    }
+} 
+
+export async function getSpacesWithSync(adminEmail) {
+    if (!adminEmail) {
+        throw new Error('Admin email is required to fetch spaces.');
+    }
+
+    const db = getDatabase();
+    const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+
+    if (!adminAgent || !adminAgent.agentData) {
+        throw new Error('Cannot fetch spaces: Missing admin data record. Admin needs to complete the login process.');
+    }
+
+    try {
+        // Always fetch current spaces from storacha service
+        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        
+        // Ensure we have the latest delegations before fetching spaces
+        try {
+            await client.capability.access.claim();
+            console.log(`Refreshed delegations for admin: ${adminEmail}`);
+        } catch (error) {
+            console.warn(`Could not refresh delegations for admin ${adminEmail}, using cached info:`, error.message);
+        }
+        
+        const serviceSpaces = await client.spaces();
+        
+        const serviceSpacesList = serviceSpaces.map(space => ({
+            did: space.did(),
+            name: space.name || space.did(),
+            isAdmin: true 
+        }));
+
+        // Sync all spaces to database
+        for (const space of serviceSpacesList) {
+            try {
+                db.prepare(`
+                    INSERT OR REPLACE INTO admin_spaces 
+                    (adminEmail, spaceDid, spaceName, createdAt, updatedAt)
+                    VALUES (?, ?, ?, ?, ?)
+                `).run(
+                    adminEmail,
+                    space.did,
+                    space.name,
+                    Date.now(),
+                    Date.now()
+                );
+            } catch (error) {
+                console.error(`Failed to sync space ${space.did} to database:`, error);
+            }
+        }
+
+        // Update in-memory cache with the fresh service data
+        storeCachedSpaces(adminEmail, serviceSpacesList);
+        console.log(`Updated in-memory cache for ${adminEmail} with ${serviceSpacesList.length} spaces`);
+
+        // Return the fresh service data
+        return serviceSpacesList;
+
+    } catch (error) {
+        console.error(`Error fetching spaces with sync for ${adminEmail}:`, error);
         throw new Error(`Failed to fetch spaces: ${error.message}`);
     }
 } 
