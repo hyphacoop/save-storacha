@@ -5,7 +5,7 @@ import {
     storeCachedSpaces,
     storeAdminSpace,
     getAdminSpaces,
-    updateSessionVerification
+    updateVerificationStatus
 } from '../lib/store.js';
 import * as Signer from '@ucanto/principal/ed25519';
 import { CarWriter } from '@ipld/car';
@@ -13,6 +13,7 @@ import { base64 } from "multiformats/bases/base64";
 import { logger } from '../lib/logger.js';
 import { getDatabase } from '../lib/db.js';
 import { getAdminClient, createAndAuthorizeNewClient } from '../lib/adminClientManager.js';
+import * as DidAuthService from './didAuthService.js';
 
 /**
  * Check if a w3up account is verified and has a valid payment plan
@@ -270,8 +271,8 @@ export async function requestAdminLoginViaW3Up(email, did, sessionId) {
             reason: isVerified ? 'Account verified with w3up' : 'Account not verified or no payment plan'
         });
 
-        // Update session verification status immediately based on account verification
-        updateSessionVerification(sessionId, isVerified);
+        // Update email verification status based on account verification
+        updateVerificationStatus(sessionId, 'email', isVerified);
 
         // STEP 2: Store DID-email mapping (regardless of verification status)
         const db = getDatabase();
@@ -304,9 +305,9 @@ export async function requestAdminLoginViaW3Up(email, did, sessionId) {
             stack: error.stack 
         });
         
-        // Always update verification status based on what we determined
+        // Always update email verification status based on what we determined
         // Don't let space sync errors affect verification
-        updateSessionVerification(sessionId, isVerified);
+        updateVerificationStatus(sessionId, 'email', isVerified);
     }
 }
 
@@ -349,31 +350,42 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
         }
         logger.info(`BACKGROUND: Cached ${spacesList.length} initial spaces for new admin`, { email });
 
-        // Finally, verify the session
-        updateSessionVerification(sessionId, true);
-        logger.info('BACKGROUND: Admin onboarding successful, session verified', { email, sessionId });
+        // Finally, mark email as verified since onboarding succeeded
+        updateVerificationStatus(sessionId, 'email', true);
+        logger.info('BACKGROUND: Admin onboarding successful, email verified', { email, sessionId });
 
     } catch (error) {
         logger.error('BACKGROUND: Admin onboarding failed', { email, sessionId, error: error.message });
         // Mark the agent as 'failed' so the user can retry on next login
         db.prepare("UPDATE admin_agents SET status = 'failed' WHERE adminEmail = ?").run(email);
-        updateSessionVerification(sessionId, false);
+        updateVerificationStatus(sessionId, 'email', false);
     }
 }
 
 /**
  * Handles an admin login, dispatching to the correct flow based on agent status.
+ * Includes DID challenge generation for cryptographic verification.
  */
 export async function handleAdminLogin(email, did) {
     logger.info('Handling admin login request', { email });
     const db = getDatabase();
+    
+    // Generate DID challenge for cryptographic verification
+    const { challenge, challengeId } = await DidAuthService.generateChallenge(did);
+    logger.info('Generated DID challenge for login', { email, did, challengeId });
     
     // Check for an existing agent and its status
     const adminAgent = db.prepare('SELECT agentData, status FROM admin_agents WHERE adminEmail = ?').get(email);
 
     if (adminAgent && adminAgent.status === 'active') {
         // --- Subsequent Login Flow ---
-        return handleSubsequentLogin(email, did, adminAgent.agentData);
+        const loginResult = await handleSubsequentLogin(email, did, adminAgent.agentData);
+        return {
+            ...loginResult,
+            challenge,
+            challengeId,
+            requiresSignature: true
+        };
 
     } else {
         // --- First-Time or Failed Onboarding Flow ---
@@ -400,6 +412,9 @@ export async function handleAdminLogin(email, did) {
             sessionId,
             did,
             verified: false,
+            challenge,
+            challengeId,
+            requiresSignature: true
         };
     }
 }
