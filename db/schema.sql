@@ -75,7 +75,9 @@ CREATE TABLE IF NOT EXISTS account_sessions (
     userAgent TEXT,
     ipAddress TEXT,
     isActive BOOLEAN DEFAULT true,
-    isVerified INTEGER DEFAULT 0
+    isVerified INTEGER DEFAULT 0,
+    emailVerified INTEGER DEFAULT 0,
+    didVerified INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_account_sessions_email ON account_sessions(email);
@@ -116,6 +118,24 @@ CREATE TABLE IF NOT EXISTS admin_agents (
 
 CREATE INDEX IF NOT EXISTS idx_admin_agents_email ON admin_agents(adminEmail);
 CREATE INDEX IF NOT EXISTS idx_admin_agents_status ON admin_agents (status);
+
+
+-- =============================================================================
+-- Table: auth_challenges
+-- Stores cryptographic challenges for DID-based authentication.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS auth_challenges (
+    challengeId TEXT PRIMARY KEY,
+    did TEXT NOT NULL,
+    challenge TEXT NOT NULL,
+    createdAt INTEGER NOT NULL,
+    expiresAt INTEGER NOT NULL,
+    used INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_challenges_did ON auth_challenges(did);
+CREATE INDEX IF NOT EXISTS idx_auth_challenges_expires ON auth_challenges(expiresAt);
+CREATE INDEX IF NOT EXISTS idx_auth_challenges_used ON auth_challenges(used);
 
 
 -- =============================================================================
