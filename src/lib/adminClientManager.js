@@ -40,9 +40,9 @@ export async function createAndAuthorizeNewClient(email) {
     const store = new StoreMemory();
     const client = await createClient({ principal, store });
 
-    logger.info('Starting interactive authorization flow', { email });
-    await client.authorize(email);
-    logger.info('Interactive authorization successful', { email });
+    logger.info('Starting interactive login flow', { email });
+    await client.login(email);
+    logger.info('Interactive login successful', { email });
 
     const archive = principal.toArchive();
     const serializableArchive = {
