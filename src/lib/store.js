@@ -82,14 +82,20 @@ export function createSession(email, adminDid = null, metadata = {}, isVerified 
     const now = Date.now();
     const expiresAt = now + SESSION_DURATION;
 
+    // For verified users, set both email and DID verification flags
+    // For new users, leave verification flags as false (they'll be set individually)
+    const emailVerified = isVerified ? 1 : 0;
+    const didVerified = 0; // DID verification always starts as false, set via signature verification
+    const finalIsVerified = isVerified ? 1 : 0;
+
     // Store in database
     try {
         const db = getDatabase();
         db.prepare(`
             INSERT INTO account_sessions (
                 sessionId, email, did, createdAt, lastActiveAt, 
-                expiresAt, userAgent, ipAddress, isActive, isVerified
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?)
+                expiresAt, userAgent, ipAddress, isActive, isVerified, emailVerified, didVerified
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?, ?)
         `).run(
             sessionId, 
             email, 
@@ -99,13 +105,18 @@ export function createSession(email, adminDid = null, metadata = {}, isVerified 
             expiresAt,
             metadata.userAgent,
             metadata.ipAddress,
-            isVerified ? 1 : 0
+            finalIsVerified,
+            emailVerified,
+            didVerified
         );
         
         logger.info('Created session', { 
             sessionId, 
             email,
             adminDid,
+            emailVerified: !!emailVerified,
+            didVerified: !!didVerified,
+            isVerified: !!finalIsVerified,
             expiresAt: new Date(expiresAt).toISOString()
         });
     } catch (error) {
@@ -123,7 +134,9 @@ export function createSession(email, adminDid = null, metadata = {}, isVerified 
         adminDid,
         lastActiveAt: now,
         isActive: true,
-        isVerified
+        isVerified: !!finalIsVerified,
+        emailVerified: !!emailVerified,
+        didVerified: !!didVerified
     });
     
     return { sessionId, expiresAt };
@@ -893,30 +906,76 @@ export function isAdminSpaceOwner(adminEmail, spaceDid) {
     }
 }
 
-// New function to update a session's verification status
-export function updateSessionVerification(sessionId, isVerified) {
+// Note: Session verification is computed based on both email and DID verification
+
+/**
+ * Updates verification status for a session
+ * @param {string} sessionId - The session ID
+ * @param {string} verificationType - Either 'email' or 'did' 
+ * @param {boolean} isVerified - Whether this verification type is now verified
+ */
+export function updateVerificationStatus(sessionId, verificationType, isVerified) {
+    if (!['email', 'did'].includes(verificationType)) {
+        throw new Error(`Invalid verification type: ${verificationType}. Must be 'email' or 'did'.`);
+    }
+
     try {
         const db = getDatabase();
+        
+        // Update the specific verification column
+        const column = verificationType === 'email' ? 'emailVerified' : 'didVerified';
+        db.prepare(`
+            UPDATE account_sessions 
+            SET ${column} = ? 
+            WHERE sessionId = ?
+        `).run(isVerified ? 1 : 0, sessionId);
+
+        // Get current verification status to compute full verification
+        const session = db.prepare(`
+            SELECT emailVerified, didVerified 
+            FROM account_sessions 
+            WHERE sessionId = ?
+        `).get(sessionId);
+
+        if (!session) {
+            logger.warn('Session not found when updating verification', { sessionId });
+            return;
+        }
+
+        // Both must be verified for full verification
+        const isFullyVerified = session.emailVerified && session.didVerified;
+        
+        // Update isVerified based on both verifications
         db.prepare(`
             UPDATE account_sessions 
             SET isVerified = ? 
             WHERE sessionId = ?
-        `).run(isVerified ? 1 : 0, sessionId);
+        `).run(isFullyVerified ? 1 : 0, sessionId);
 
-        const session = sessionStore.get(sessionId);
-        if (session) {
-            session.isVerified = isVerified;
-            sessionStore.set(sessionId, session);
+        // Update in-memory session store
+        const memorySession = sessionStore.get(sessionId);
+        if (memorySession) {
+            memorySession.isVerified = isFullyVerified;
+            memorySession.emailVerified = !!session.emailVerified;
+            memorySession.didVerified = !!session.didVerified;
+            sessionStore.set(sessionId, memorySession);
         }
 
-        logger.info('Updated session verification status', { 
+        logger.info('Updated verification status', { 
             sessionId,
-            isVerified 
+            verificationType,
+            isVerified,
+            emailVerified: !!session.emailVerified,
+            didVerified: !!session.didVerified,
+            isFullyVerified
         });
+
     } catch (error) {
-        logger.error('Failed to update session verification status', { 
+        logger.error('Failed to update verification status', { 
             sessionId, 
+            verificationType,
             error: error.message 
         });
+        throw error;
     }
 } 

@@ -12,6 +12,7 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | ------ | ---- | ----------- |
 | POST | /auth/login | Initiates an asynchronous login. |
 | POST | /auth/login/did | Admin login via DID only |
+| POST | /auth/verify | DID signature verification endpoint |
 | GET  | /auth/session | Validate session and check verification status. |
 | POST | /auth/logout | End session |
 | POST | /auth/w3up/logout | Logout from w3up service |
@@ -31,6 +32,66 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | DELETE | /delegations/revoke | Revoke delegation |
 
 ## Authentication
+
+### DID-Based Cryptographic Authentication
+
+The system uses DID-based cryptographic authentication using Ed25519 signatures. 
+
+**Authentication Flow:**
+1. **Login Initiation**: Client calls `/auth/login` with email and DID
+2. **Challenge Generation**: Server generates a unique cryptographic challenge
+3. **Challenge Signing**: Client signs the challenge with their Ed25519 private key
+4. **Signature Verification**: Client calls `/auth/verify` with the signature
+5. **Session Authentication**: Server verifies the signature and authenticates the session
+
+**Security Features:**
+- **Time-bound challenges**: 5-minute expiration prevents replay attacks
+- **One-time use**: Each challenge can only be used once
+- **Ed25519 signatures**: Cryptographically secure signature algorithm
+- **DID validation**: Ensures proper DID format and key extraction
+- **Challenge-response**: Prevents man-in-the-middle attacks
+
+**Example Flow:**
+```bash
+# 1. Initiate login and get challenge
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
+  }' \
+  http://localhost:3000/auth/login
+
+# Response includes challenge for signing
+{
+  "message": "Login initiated. Please verify your email. Poll the session endpoint for completion.",
+  "sessionId": "your-session-id",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "verified": false,
+  "challenge": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef:1753721491465:randombytes",
+  "challengeId": "challenge-uuid"
+}
+
+# 2. Sign the challenge with Ed25519 private key (client-side)
+# signature = ed25519_sign(challenge, private_key)
+
+# 3. Verify signature
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "challengeId": "challenge-uuid",
+    "signature": "base64-encoded-signature",
+    "sessionId": "your-session-id",
+    "email": "user@example.com"
+  }' \
+  http://localhost:3000/auth/verify
+
+# Response confirms authentication
+{
+  "sessionId": "your-session-id",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "message": "Authentication successful"
+}
+```
 
 ### POST /auth/login
 Initiates a unified, asynchronous login for an admin user using their email and DID.
@@ -89,6 +150,61 @@ curl -X POST -H "Content-Type: application/json" \
   "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
 }
 ```
+
+### POST /auth/verify
+DID signature verification endpoint for cryptographic authentication.
+
+This endpoint completes the DID-based authentication flow by verifying a signed challenge. The client must first obtain a challenge from the login endpoint, sign it with their Ed25519 private key, and then submit the signature for verification.
+
+**Request:**
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "challengeId": "challenge-uuid-from-login",
+    "signature": "base64-encoded-signature-of-challenge",
+    "sessionId": "session-id-from-login",
+    "email": "your-email@example.com"
+  }' \
+  http://localhost:3000/auth/verify
+```
+
+**Request Parameters:**
+- `did` (required): The client's decentralized identifier
+- `challengeId` (required): The challenge identifier from the login call
+- `signature` (required): Base64-encoded signature of the challenge
+- `sessionId` (required): The session ID from the login call to update
+- `email` (optional): Email address for enhanced user identification
+
+**Response (Success):**
+```json
+{
+  "sessionId": "your-session-id",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "message": "Authentication successful"
+}
+```
+
+**Response (Invalid Signature):**
+```json
+{
+  "error": "Invalid signature or expired challenge"
+}
+```
+
+**Response (Missing Parameters):**
+```json
+{
+  "error": "DID is required"
+}
+```
+
+**Authentication Flow:**
+1. Client calls `/auth/login` to initiate login and receive a challenge
+2. Client signs the challenge with their Ed25519 private key
+3. Client calls `/auth/verify` with the signature and challenge ID
+4. Server verifies the signature against the DID's public key
+5. Server updates the session as authenticated upon successful verification
 
 ### GET /auth/session
 Validates a session ID and checks its verification status. Clients should poll this endpoint after calling `/auth/login` to see when the `verified` flag becomes `true`.
@@ -528,28 +644,87 @@ curl -X DELETE \
 
 ## Complete Examples
 
-### Complete Example: Delegation and Upload
+### Complete Example: DID-Based Cryptographic Authentication
 
-Here's a complete example of the delegation and upload process using real DIDs and responses from our successful implementation:
+Here's a complete example of the DID-based cryptographic authentication flow:
 
-#### 1. Admin Login
+#### 1. Initiate Login with Challenge
 ```bash
-# Login with email and DID
+# Login with email and DID to get a challenge
 curl -X POST -H "Content-Type: application/json" \
   -d '{
     "email": "admin@email.net",
-    "did": "did:key:example-admin-did"
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
   }' \
   http://localhost:3000/auth/login
 
 # Response:
 {
-  "message": "Login successful",
-  "sessionId": "00b3d659c3816cd3ea8ffd6b6cdf8f8a",
-  "did": "did:key:example-admin-did",
-  "verified": true
+  "message": "Login initiated. Please verify your email. Poll the session endpoint for completion.",
+  "sessionId": "be2963fe916318160a98b83405cd1b90",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "verified": false,
+  "challenge": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef:1753721491465:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456",
+  "challengeId": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
+
+#### 2. Sign the Challenge (Client-Side)
+```javascript
+// Using a cryptographic library to sign the challenge
+const challenge = "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef:1753721491465:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456";
+const privateKey = "your-ed25519-private-key";
+const signature = ed25519.sign(challenge, privateKey);
+const base64Signature = btoa(String.fromCharCode(...signature));
+```
+
+#### 3. Verify Signature
+```bash
+# Submit the signature for verification
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+    "challengeId": "550e8400-e29b-41d4-a716-446655440000",
+    "signature": "base64-encoded-signature-from-step-2",
+    "sessionId": "be2963fe916318160a98b83405cd1b90",
+    "email": "admin@email.net"
+  }' \
+  http://localhost:3000/auth/verify
+
+# Response:
+{
+  "sessionId": "be2963fe916318160a98b83405cd1b90",
+  "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "message": "Authentication successful"
+}
+```
+
+#### 4. Verify Session Status
+```bash
+# Check that the session is now authenticated
+curl -H "x-session-id: be2963fe916318160a98b83405cd1b90" \
+  http://localhost:3000/auth/session
+
+# Response:
+{
+  "valid": true,
+  "verified": true,
+  "expiresAt": "2024-03-21T12:00:00.000Z",
+  "message": "Session is valid"
+}
+```
+
+This example demonstrates:
+- Challenge generation during login
+- Client-side signature creation
+- Server-side signature verification
+- Session authentication upon successful verification
+
+### Complete Example: Delegation and Upload
+
+Here's a complete example of the delegation and upload process using real DIDs and responses from our successful implementation:
+
+#### 1. Login as seen above
 
 #### 2. List Spaces
 ```bash

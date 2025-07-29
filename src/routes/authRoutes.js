@@ -21,12 +21,14 @@
 
 import express from 'express';
 import * as AuthService from '../services/authService.js';
+import * as DidAuthService from '../services/didAuthService.js';
 import { 
     getSession, 
     clearSession as clearStoreSession,
     getAccountSessions,
     deactivateAccountSessions,
-    deactivateSession
+    deactivateSession,
+    updateVerificationStatus
 } from '../lib/store.js';
 import { logger } from '../lib/logger.js';
 
@@ -145,6 +147,73 @@ router.post('/login/email', async (req, res) => {
     } catch (error) {
         logger.error('Email login failed', { error: error.message });
         res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /auth/verify - DID signature verification endpoint
+ * 
+ * Verifies a signed challenge and updates the existing session as authenticated.
+ * This completes the DID-based authentication flow.
+ * 
+ * Request body:
+ * - did: The client's decentralized identifier
+ * - challengeId: The challenge identifier from /auth/login
+ * - signature: Base64-encoded signature of the challenge
+ * - sessionId: The session ID from the login call to update
+ * - email: (optional) Email address for enhanced user identification
+ * 
+ * Response:
+ * - sessionId: Session identifier for subsequent authenticated requests
+ * - did: Confirmed DID
+ * - message: Success message
+ */
+router.post('/verify', async (req, res) => {
+    try {
+        const { did, challengeId, signature, sessionId, email } = req.body;
+        
+        if (!did) {
+            return res.status(400).json({ error: 'DID is required' });
+        }
+        
+        if (!challengeId) {
+            return res.status(400).json({ error: 'Challenge ID is required' });
+        }
+        
+        if (!signature) {
+            return res.status(400).json({ error: 'Signature is required' });
+        }
+        
+        if (!sessionId) {
+            return res.status(400).json({ error: 'Session ID is required' });
+        }
+        
+        // Verify the signed challenge
+        const isValid = await DidAuthService.verifySignedChallenge(did, challengeId, signature);
+        
+        if (!isValid) {
+            logger.warn('DID signature verification failed', { did, challengeId });
+            return res.status(401).json({ error: 'Invalid signature or expired challenge' });
+        }
+        
+        // Update DID verification status (this will check if both email and DID are verified)
+        updateVerificationStatus(sessionId, 'did', true);
+        
+        logger.info('DID authentication successful', { did, email, sessionId });
+        
+        res.json({
+            sessionId,
+            did,
+            message: 'Authentication successful'
+        });
+        
+    } catch (error) {
+        logger.error('DID verification failed', { 
+            did: req.body?.did, 
+            challengeId: req.body?.challengeId,
+            error: error.message 
+        });
+        res.status(500).json({ error: error.message || 'Verification failed' });
     }
 });
 
