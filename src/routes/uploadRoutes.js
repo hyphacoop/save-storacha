@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { CarReader } from '@ipld/car/reader';
-import { getDelegationsForUser, getUserPrincipal } from '../lib/store.js';
+import { getDelegationsForUser, getAdminSpaces } from '../lib/store.js';
 import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
 import { StoreMemory } from '@storacha/client/stores/memory';
@@ -19,6 +19,7 @@ import { CarWriter } from '@ipld/car/writer';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
 import { generateAuthHeaders } from '../lib/token-generation.js';
 import { logger } from '../lib/logger.js';
+import { flexibleAuth } from './spaceRoutes.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -260,40 +261,117 @@ router.get('/bridge-tokens', async (req, res) => {
 });
 
 // GET /uploads - List uploads for a user in a specific space
-router.get('/uploads', async (req, res) => {
+router.get('/uploads', flexibleAuth, async (req, res) => {
     try {
-        const userDid = req.headers['x-user-did'];
+        const userDid = req.userDid;
+        const userType = req.userType;
         const spaceDid = req.query.spaceDid;
 
-        if (!userDid || !spaceDid) {
-            return res.status(400).json({ error: 'Missing userDid or spaceDid' });
+        if (!spaceDid) {
+            return res.status(400).json({ error: 'Missing spaceDid' });
         }
 
         console.log('Upload list request received:', {
             userDid,
+            userType,
             spaceDid
         });
 
-        // Get delegations for the user
-        const delegations = await getDelegationsForUser(userDid);
-        console.log('Found delegations:', delegations ? delegations.length : 0);
-        if (!delegations || delegations.length === 0) {
-            console.log('No valid delegations found for user:', userDid);
-            return res.status(403).json({ error: 'No valid delegation found', userDid });
-        }
+        // For admin users, check if they have access to this space
+        if (userType === 'admin') {
+            const adminEmail = req.userEmail;
+            const adminSpaces = getAdminSpaces(adminEmail);
+            const hasAdminAccess = adminSpaces.some(space => space.did === spaceDid);
+            
+            if (!hasAdminAccess) {
+                console.log('Admin does not have access to space:', { adminEmail, spaceDid });
+                return res.status(403).json({ 
+                    error: 'Admin does not have access to this space',
+                    adminEmail,
+                    spaceDid
+                });
+            }
+            
+            // Admin has access - use admin client directly
+            let listClient;
+            try {
+                listClient = await getAdminClient(adminEmail);
+                console.log('Using admin client for upload listing with DID:', listClient.did());
+            } catch (error) {
+                console.log('Failed to get admin client, falling back to global client:', error.message);
+                listClient = getClient();
+            }
+            
+            // Set the current space for the client
+            await listClient.setCurrentSpace(spaceDid);
+            
+            // List uploads using the w3up client
+            console.log('Listing uploads for admin...');
+            
+            const uploads = [];
+            let cursor = req.query.cursor; // Support pagination
+            const size = parseInt(req.query.size) || 25; // Default page size
+            
+            try {
+                // Use the capability.upload.list method on the client
+                console.log('Using client.capability.upload.list method with cursor:', cursor, 'size:', size);
+                const result = await listClient.capability.upload.list({ 
+                    cursor: cursor || '', 
+                    size: size 
+                });
+                console.log('List result:', result);
+                
+                if (result && result.results) {
+                    for (const upload of result.results) {
+                        uploads.push({
+                            cid: upload.root?.toString() || upload.cid?.toString(),
+                            size: upload.size,
+                            created: upload.insertedAt || upload.updatedAt,
+                            insertedAt: upload.insertedAt,
+                            updatedAt: upload.updatedAt,
+                            gatewayUrl: upload.root
+                                ? `https://${upload.root.toString()}.ipfs.w3s.link/`
+                                : `https://${upload.cid?.toString()}.ipfs.w3s.link/`,
+                        });
+                    }
+                }
+                
+                // Return pagination info
+                res.json({
+                    success: true,
+                    userDid,
+                    spaceDid,
+                    uploads,
+                    count: uploads.length,
+                    cursor: result?.before, // For next page
+                    hasMore: !!result?.before
+                });
+                
+            } catch (error) {
+                console.error('Failed to list uploads:', error);
+                throw new Error('Failed to list uploads: ' + error.message);
+            }
+        } else {
+            // For delegated users, check delegations to confirm access
+            const delegations = await getDelegationsForUser(userDid);
+            console.log('Found delegations:', delegations ? delegations.length : 0);
+            if (!delegations || delegations.length === 0) {
+                console.log('No valid delegations found for user:', userDid);
+                return res.status(403).json({ error: 'No valid delegation found', userDid });
+            }
 
-        // Filter delegations for the specific space
-        const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
-        console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
-        if (spaceDelegations.length === 0) {
-            console.log('No valid delegations found for user and space:', { userDid, spaceDid });
-            return res.status(403).json({ 
-                error: 'No valid delegation found for this space',
-                userDid,
-                spaceDid,
-                availableSpaces: delegations.map(d => d.spaceDid)
-            });
-        }
+            // Filter delegations for the specific space
+            const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
+            console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
+            if (spaceDelegations.length === 0) {
+                console.log('No valid delegations found for user and space:', { userDid, spaceDid });
+                return res.status(403).json({ 
+                    error: 'No valid delegation found for this space',
+                    userDid,
+                    spaceDid,
+                    availableSpaces: delegations.map(d => d.spaceDid)
+                });
+            }
 
         // Use the first valid delegation
         const delegation = spaceDelegations[0];
@@ -413,11 +491,12 @@ router.get('/uploads', async (req, res) => {
             console.error('Upload listing error:', error);
             res.status(500).json({ error: error.message });
         }
-
+    }
     } catch (error) {
         console.error('Upload listing error:', error);
         res.status(500).json({ error: error.message });
     }
+        
 });
 
 export default router;
