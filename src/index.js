@@ -24,6 +24,7 @@ import authRoutes from './routes/authRoutes.js';
 import spaceRoutes from './routes/spaceRoutes.js';
 import delegationRoutes from './routes/delegationRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
+import bridgeRoutes from './routes/bridgeRoutes.js';
 import { logger } from './lib/logger.js';
 
 const app = express();
@@ -110,6 +111,9 @@ async function main() {
 
         app.use('/delegations', delegationRoutes);
         logger.info('Delegation routes mounted');
+
+        app.use('/', bridgeRoutes);
+        logger.info('Bridge routes mounted');
 
         // Upload routes are mounted at root level for simpler client integration
         app.use('/', uploadRoutes);
