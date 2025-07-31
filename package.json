@@ -34,6 +34,7 @@
     "@ucanto/principal": "^9.0.2",
     "better-sqlite3": "^11.10.0",
     "cors": "^2.8.5",
+    "crypto-random-string": "^5.0.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
     "ipfs-car": "^3.0.0",

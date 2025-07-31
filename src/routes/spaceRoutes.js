@@ -44,7 +44,7 @@ const router = express.Router();
  * 
  * Sets req.userType to either 'admin' or 'delegated' to indicate auth method used
  */
-const flexibleAuth = (req, res, next) => {
+export const flexibleAuth = (req, res, next) => {
     const sessionId = req.headers['x-session-id'];
     const userDid = req.headers['x-user-did'];
 
