@@ -24,7 +24,7 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | GET  | /spaces/account-usage | Total account usage |
 | POST | /upload | Upload through token service |
 | GET  | /bridge-tokens | Get direct-bridge auth headers |
-| GET  | /uploads | List uploads for user+space |
+| GET  | /uploads | List uploads for user+space (supports both admin and delegated user access) |
 | GET  | /delegations/user/spaces | Spaces accessible to a user |
 | GET  | /delegations/list | List delegations |
 | POST | /delegations/create | Create delegation |
@@ -456,14 +456,22 @@ This endpoint:
 ### GET /uploads
 List uploads for a user in a specific space.
 
-**Authentication:** `x-user-did` header (user DID)
+**Authentication:** Flexible - supports two authentication methods:
+- **Admin users:** `x-session-id` header (session ID) - Direct access to admin spaces
+- **Delegated users:** `x-user-did` header (user DID) - Delegation-based access
 
 **Query Parameters:**
 - `spaceDid` (required): The DID of the space to list uploads for
 - `cursor` (optional): Pagination cursor for next page
 - `size` (optional): Number of results per page (default: 25)
 
-**Request:**
+**Admin Request (Direct Access):**
+```bash
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+```
+
+**Delegated User Request (Delegation Required):**
 ```bash
 curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
   "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
@@ -497,7 +505,42 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
 }
 ```
 
-**Note:** This endpoint requires the user to have valid delegation access to the specified space. The response includes all uploads with their CIDs, timestamps, and IPFS gateway URLs for direct access.
+**Access Patterns:**
+
+**Admin Access (No Delegation Required):**
+- Admins can list uploads in any of their admin spaces directly
+- Uses session-based authentication (`x-session-id`)
+- No delegation creation required
+- Access is granted through admin privilege escalation
+
+**Delegated User Access (Delegation Required):**
+- Users can only list uploads in spaces they have been delegated to
+- Uses DID-based authentication (`x-user-did`)
+- Requires explicit delegation from an admin
+- Access is controlled through delegation validation
+
+**Error Responses:**
+
+**403 Forbidden - No Delegation (Delegated User):**
+```json
+{
+  "error": "No valid delegation found for this space",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+  "availableSpaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"]
+}
+```
+
+**403 Forbidden - No Admin Access (Admin):**
+```json
+{
+  "error": "Admin does not have access to this space",
+  "adminEmail": "admin@example.com",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+}
+```
+
+**Note:** This endpoint uses the system's dual access pattern where admins have direct access to their spaces while delegated users require explicit delegations.
 
 ## Delegations
 
