@@ -4,21 +4,12 @@ import { CarReader } from '@ipld/car/reader';
 import { getDelegationsForUser, getAdminSpaces } from '../lib/store.js';
 import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
-import { StoreMemory } from '@storacha/client/stores/memory';
-import { create as createW3upClient } from '@storacha/client';
-import { Blob } from 'buffer'; // Node.js Blob implementation
 import { filesFromPaths } from 'files-from-path';
 import { writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { parse as parseDID } from '@ipld/dag-ucan/did';
 import rateLimit from 'express-rate-limit';
-import { sha256 } from '@ucanto/core';
-import { ed25519 } from '@ucanto/principal';
-import { CarWriter } from '@ipld/car/writer';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
-import { generateAuthHeaders } from '../lib/token-generation.js';
-import { logger } from '../lib/logger.js';
 import { flexibleAuth } from './spaceRoutes.js';
 
 const router = express.Router();
@@ -218,45 +209,6 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
     } catch (error) {
         console.error('Upload error:', error);
         res.status(500).json({ error: error.message });
-    }
-});
-
-// GET /bridge-tokens - Get authentication tokens for direct uploads to w3up HTTP API bridge
-router.get('/bridge-tokens', async (req, res) => {
-    try {
-        const userDid = req.headers['x-user-did'];
-        const spaceDid = req.query.spaceDid;
-
-        if (!userDid || !spaceDid) {
-            return res.status(400).json({ error: 'Missing userDid or spaceDid' });
-        }
-
-        logger.info('[bridge-tokens] Generating tokens for user', { userDid, spaceDid });
-
-        try {
-            const { headers } = await generateAuthHeaders(userDid, spaceDid)
-            
-            // Log the complete information for testing
-            logger.info('[bridge-tokens] ✅ Tokens generated successfully');
-            logger.info('[bridge-tokens] Headers:', {
-                'X-Auth-Secret': headers['X-Auth-Secret'],
-                'Authorization': headers['Authorization'].substring(0, 100) + '...'
-            });
-            
-            // Client is responsible for constructing the upload request (e.g., via curl) using these headers.
-            res.json({ 
-                headers
-            });
-            
-        } catch (err) {
-            logger.error('[bridge-tokens] Token generation failed:', err);
-            res.status(500).json({ error: err.message });
-        }
-
-    } catch (error) {
-        logger.error('[bridge-tokens] Bridge token generation failed:', error);
-        res.status(error.message.includes('No principal found') ? 403 : 500)
-           .json({ error: error.message });
     }
 });
 
