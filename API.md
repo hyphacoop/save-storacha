@@ -23,7 +23,7 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | GET  | /spaces/usage | Usage for a space |
 | GET  | /spaces/account-usage | Total account usage |
 | POST | /upload | Upload through token service |
-| GET  | /bridge-tokens | Get direct-bridge auth headers |
+| POST | /bridge-tokens | Generate bridge tokens for Storacha HTTP API bridge |
 | GET  | /uploads | List uploads for user+space (supports both admin and delegated user access) |
 | GET  | /delegations/user/spaces | Spaces accessible to a user |
 | GET  | /delegations/list | List delegations |
@@ -387,38 +387,153 @@ curl -H "x-session-id: your-session-id" \
 }
 ```
 
-## Upload Paths
+## Bridge Tokens
 
-There are two ways to upload files:
+### POST /bridge-tokens
 
-### 1. Direct Upload via w3up HTTP API Bridge (✅ Working)
+Generate authentication tokens for the Storacha HTTP API bridge. This endpoint supports both admin and delegated user authentication.
 
-#### Step 1: Get authentication tokens for the bridge
+**Authentication:** Flexible - supports two authentication methods:
+- **Admin users:** `x-session-id` header (session ID) - Direct access to admin spaces
+- **Delegated users:** `x-user-did` header (user DID) - Delegation-based access
+
+**Request Body:**
+```json
+{
+  "resource": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+  "can": "store/add",
+  "expiration": "2025-12-31T23:59:59Z"
+}
+```
+
+**Admin Request:**
 ```bash
-curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+curl -X POST \
+  -H "x-session-id: your-session-id" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+    "can": "store/add"
+  }' \
+  http://localhost:3000/bridge-tokens
+```
+
+**Delegated User Request:**
+```bash
+curl -X POST \
+  -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+    "can": "store/add"
+  }' \
+  http://localhost:3000/bridge-tokens
 ```
 
 **Response:**
 ```json
 {
   "headers": {
-    "X-Auth-Secret": "your-auth-secret",
-    "Authorization": "your-authorization-token"
-  },
-  "curlCommand": "curl -X POST \\\n  -H \"X-Auth-Secret: your-auth-secret\" \\\n  -H \"Authorization: your-authorization-token\" \\\n  -F \"file=@/path/to/your/file.txt\" \\\n  https://up.storacha.network/bridge",
-  "note": "Replace /path/to/your/file.txt with actual file path for testing"
+    "X-Auth-Secret": "uZTBiYjYxZTY1YWM2Y2M...",
+    "Authorization": "uOqJlcm9vdHOB2CpYJQABcRIg..."
+  }
 }
 ```
 
-#### Step 2: Use tokens to upload directly to w3up HTTP API bridge
+**Usage Notes:**
+- **Token Expiration**: Tokens expire quickly (minutes, not hours) - always generate fresh tokens for each operation
+- **Capabilities**: Supports `store/add` and `upload/add` capabilities
+- **Space Validation**: Automatically validates user access to the specified space
+- **Delegation Support**: For delegated users, automatically uses the admin's client with proper delegation context
+
+## Upload Paths
+
+There are two ways to upload files:
+
+### 1. Direct Upload via Storacha HTTP API Bridge (✅ Working)
+
+#### Step 1: Get authentication tokens for the bridge
+Use the `POST /bridge-tokens` endpoint as documented above.
+
+#### Step 2: Complete Bridge Upload Workflow
+
+The Storacha HTTP API bridge uses a two-step process:
+
+**Step 2a: Store the file (store/add)**
 ```bash
 curl -X POST \
   -H "X-Auth-Secret: your-auth-secret" \
   -H "Authorization: your-authorization-token" \
-  -F "file=@/path/to/file.png" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      [
+        "store/add",
+        "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+        {
+          "link": { "/": "bagbaiera4tntawdwlxf33uld7hd5yfaadct5galsr45vawbomjbiytdx4dzq" },
+          "size": 161
+        }
+      ]
+    ]
+  }' \
   https://up.storacha.network/bridge
 ```
+
+**Response:**
+```json
+{
+  "p": {
+    "out": {
+      "ok": {
+        "status": "upload",
+        "url": "https://carpark-prod-0.s3.us-west-2.amazonaws.com/...",
+        "headers": {
+          "content-length": "161",
+          "x-amz-checksum-sha256": "..."
+        }
+      }
+    }
+  }
+}
+```
+
+**Step 2b: Upload CAR file to S3**
+```bash
+curl -X PUT \
+  -H "content-length: 161" \
+  -H "x-amz-checksum-sha256: 5NswWHZdy73RY/nH3BQAGKfTAXKPO1BYLmJCjEx34PM=" \
+  --data-binary @your-file.car \
+  "https://carpark-prod-0.s3.us-west-2.amazonaws.com/..."
+```
+
+**Step 2c: Register the upload (upload/add)**
+```bash
+curl -X POST \
+  -H "X-Auth-Secret: your-auth-secret" \
+  -H "Authorization: your-authorization-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      [
+        "upload/add",
+        "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+        {
+          "root": { "/": "bafybeidhkumeonuwkebh2i4fc7o7lguehauradvlk57gzake6ggjsy372a" }
+        }
+      ]
+    ]
+  }' \
+  https://up.storacha.network/bridge
+```
+
+**Important Notes:**
+- **No shards field**: Small uploads work without the `shards` field in payloads
+- **Token expiration**: Tokens expire quickly - always use fresh tokens
+- **CAR files**: Files must be packed as CAR files before upload
+- **Two-step process**: `store/add` → S3 upload → `upload/add` is required
+
+**Recommendation**: Use the proven working E2E test scripts instead of manual testing to avoid common pitfalls like token expiration and payload construction errors.
 
 ### 2. Upload through Token Service (✅ Working - Recommended for now)
 
@@ -825,36 +940,91 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
 
 #### 5. Upload File (Method 1: Direct Bridge Upload)
 ```bash
-# Get authentication tokens
-curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  "http://localhost:3000/bridge-tokens?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
-
-# Response:
-{
-  "headers": {
-    "X-Auth-Secret": "uOGQyYzRhYWQwNmY3NtEwOTg1ZWU0NDU0NjByNTg2ZGE",
-    "Authorization": "uOqJlcm9vdHOB2CpYKQABcRIgYVymlT6sxiDd45CA0f..."
-  },
-  "curlCommand": "curl -X POST \\\n  -H \"X-Auth-Secret: uOGQyYzRhYWQwNmY3NtEwOTg1ZWU0NDU0NjByNTg2ZGE\" \\\n  -H \"Authorization: uOqJlcm9vdHOB2CpYKQABcRIgYVymlT6sxiDd45CA0f...\" \\\n  -F \"file=@/path/to/your/file.txt\" \\\n  https://up.storacha.network/bridge"
-}
-
-# Upload directly to Storacha bridge
+# For admin users
 curl -X POST \
-  -H "X-Auth-Secret: uOGQyYzRhYWQwNmY3NtEwOTg1ZWU0NDU0NjByNTg2ZGE" \
-  -H "Authorization: uOqJlcm9vdHOB2CpYKQABcRIgYVymlT6sxiDd45CA0f..." \
-  -F "file=@/path/to/your/file.txt" \
+  -H "x-session-id: your-session-id" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+    "can": "store/add"
+  }' \
+  http://localhost:3000/bridge-tokens
+
+# For delegated users
+curl -X POST \
+  -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+    "can": "store/add"
+  }' \
+  http://localhost:3000/bridge-tokens
+
+
+
+
+
+**Complete Bridge Upload Workflow:**
+
+**Step 5b: Store the file (store/add)**
+```bash
+curl -X POST \
+  -H "X-Auth-Secret: your-auth-secret" \
+  -H "Authorization: your-authorization-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      [
+        "store/add",
+        "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+        {
+          "link": { "/": "bagbaiera4tntawdwlxf33uld7hd5yfaadct5galsr45vawbomjbiytdx4dzq" },
+          "size": 161
+        }
+      ]
+    ]
+  }' \
+  https://up.storacha.network/bridge
+```
+
+**Step 5c: Upload CAR file to S3**
+```bash
+curl -X PUT \
+  -H "content-length: 161" \
+  -H "x-amz-checksum-sha256: 5NswWHZdy73RY/nH3BQAGKfTAXKPO1BYLmJCjEx34PM=" \
+  --data-binary @your-file.car \
+  "https://carpark-prod-0.s3.us-west-2.amazonaws.com/..."
+```
+
+**Step 5d: Register the upload (upload/add)**
+```bash
+curl -X POST \
+  -H "X-Auth-Secret: your-auth-secret" \
+  -H "Authorization: your-authorization-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      [
+        "upload/add",
+        "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+        {
+          "root": { "/": "bafybeidhkumeonuwkebh2i4fc7o7lguehauradvlk57gzake6ggjsy372a" }
+        }
+      ]
+    ]
+  }' \
   https://up.storacha.network/bridge
 ```
 
 #### 6. Upload File (Method 2: Through Token Service)
 ```bash
 # Create a test file
-echo "Test upload after fix" > test-fix.txt
+echo "Test upload" > test-upload.txt
 
 # Upload the file
 curl -X POST \
   -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  -F "file=@test-fix.txt" \
+  -F "file=@test-upload.txt" \
   -F "spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba" \
   http://localhost:3000/upload
 
@@ -975,20 +1145,7 @@ The revocation process is immediate and permanent. Once a delegation is revoked:
 - The user's spaces list will be empty
 - A new delegation must be created to restore access
 
-## Legacy / Deprecated Endpoints
 
-### POST /auth/login/email _(Deprecated)_
-This endpoint initiated w3up email validation. It remains for backward-compatibility but will be removed in a future release. Use **POST /auth/login** instead.
-
-**Request:**
-```bash
-curl -X POST -H "Content-Type: application/json" \
-  -d '{
-    "email": "your-email@example.com",
-    "did": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef"
-  }' \
-  http://localhost:3000/auth/login/email
-```
 
 ## Error Handling
 

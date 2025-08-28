@@ -7,7 +7,7 @@ This document describes the complete end-to-end workflow for uploading files to 
 ## Prerequisites
 
 - Server running on port 3000
-- Valid admin session with delegations loaded
+- Valid admin session OR valid delegated user DID
 - `ipfs-car` tool installed
 - `curl` for API calls
 - Valid space DID for upload target
@@ -27,12 +27,12 @@ npm start
 
 ### 2. Authentication
 
-Login to obtain a session ID:
-
+**Option A: Admin Authentication**
+**Option B: Delegated User Authentication**
 
 ### 3. File Preparation
 
-Create a test file and convert it to CAR format:
+Convert the file to CAR format:
 
 ```bash
 # Create test file
@@ -48,18 +48,27 @@ ipfs-car hash test-file.car
 wc -c test-file.car
 ```
 
-**Expected Output**:
-- CAR CID: `bagbasampleCARCIDdlasdlaskjdasldkja`
-- Size: `550` bytes
-- Root DAG CID: `bafybeidyzsampleRootDAGCIDsadalskdjadasda`
-
 ### 4. Generate Bridge Tokens
 
 Generate bridge tokens for the target space:
 
+**Option A: Admin Authentication (using session ID)**
 ```bash
 curl -X POST http://localhost:3000/bridge-tokens \
   -H "x-session-id: your-session-id" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "resource": "did:key:z6MyourTargetSPACEDIDasadalkdjas",
+    "can": ["store/add", "upload/add"],
+    "expiration": expirationTime,
+    "json": false
+  }'
+```
+
+**Option B: Delegated User Authentication (using user DID)**
+```bash
+curl -X POST http://localhost:3000/bridge-tokens \
+  -H "x-user-did: did:key:z6MkdelegatedUserDID..." \
   -H "Content-Type: application/json" \
   -d '{
     "resource": "did:key:z6MyourTargetSPACEDIDasadalkdjas",
@@ -121,7 +130,9 @@ curl -X POST https://up.storacha.network/bridge \
 }]
 ```
 
-**Important**: If `status` is `"done"`, the file is already uploaded. If `status` is `"upload"`, proceed to S3 upload.
+**Important**: 
+- If `status` is `"done"`, the file is already uploaded. If `status` is `"upload"`, proceed to S3 upload.
+- **Note**: The `shards` field in `store/add` is NOT required for small uploads.
 
 ### 6. Upload to S3
 
@@ -154,8 +165,7 @@ curl -X POST https://up.storacha.network/bridge \
         "upload/add",
         "did:key:z6MyourTargetSPACEDIDasadalkdjas",
         {
-          "root": { "/": "bafybeidyzsampleRootDAGCIDsadalskdjadasda" },
-          "shards": [{ "/": "bagbasampleCARCIDdlasdlaskjdasldkja" }]
+          "root": { "/": "bafybeidyzsampleRootDAGCIDsadalskdjadasda" }
         }
       ]
     ]
@@ -169,7 +179,7 @@ curl -X POST https://up.storacha.network/bridge \
     "out": {
       "ok": {
         "root": { "/": "bafybeidyzsampleRootDAGCIDsadalskdjadasda" },
-        "shards": [{ "/": "bagbasampleCARCIDdlasdlaskjdasldkja" }]
+        "shards": []
       }
     }
   }
@@ -181,9 +191,12 @@ curl -X POST https://up.storacha.network/bridge \
 ### Bridge Token Generation
 
 - **Endpoint**: `/bridge-tokens` (mounted at root level)
-- **Authentication**: Requires valid session ID in `x-session-id` header
+- **Authentication**: 
+  - **Admin**: Requires valid session ID in `x-session-id` header
+  - **Delegated User**: Requires valid user DID in `x-user-did` header
 - **Token Format**: Returns `xAuthSecret` and `authorization` headers
 - **Expiration**: Tokens expire quickly, regenerate as needed
+- **Delegation Support**: Automatically handles UCAN delegation chains for delegated users
 
 ### S3 Upload Challenges
 
@@ -200,21 +213,20 @@ curl -X POST https://up.storacha.network/bridge \
   - CAR CID: `bag...` (for store/add)
 - **Size Calculation**: Use `wc -c` for exact byte count
 
+### Critical Capability Structure
+
+- **`store/add`**: Must include `link` and `size` (shards field NOT required for small uploads)
+- **`upload/add`**: Must NOT include `shards` field (causes authorization errors)
+- **Space DID**: Must use space DID from spaces list
+- **Token Freshness**: Tokens expire quickly, failures might require to regenerate fresh tokens for each test
+
+**Note on Shards Field**: only `link` and `size` are needed in `store/add`. The `shards` field is only required for large, multi-part uploads.
+
 ### Error Handling
 
 - **InvalidToken**: Regenerate tokens and retry immediately
 - **Session Expired**: Re-login to get new session ID
 - **S3 Errors**: Check URL expiration and retry with fresh tokens
-
-## Success Criteria
-
-✅ **Server Running**: Bridge routes accessible at `/bridge-tokens`  
-✅ **Authentication**: Valid session with loaded delegations  
-✅ **Token Generation**: Successfully generated bridge tokens  
-✅ **Bridge API**: Successfully called `store/add` and got S3 URL  
-✅ **S3 Upload**: Successfully uploaded CAR file (HTTP 200)  
-✅ **Upload Registration**: Successfully called `upload/add`  
-✅ **File Available**: File appears in Storacha account upload list  
 
 ## Troubleshooting
 
@@ -236,31 +248,7 @@ curl -X POST https://up.storacha.network/bridge \
    - Check admin has proper delegations for the space
    - Verify space DID is correct
 
-### Debug Commands
+5. **"could not extract delegation from authorization header value"**
+   - Tokens have expired (most common cause)
+   - Generate fresh tokens and retry immediately
 
-```bash
-# Verify session status
-curl -H "x-session-id: YOUR_SESSION_ID" http://localhost:3000/auth/session
-
-# Test bridge tokens endpoint
-curl -X POST http://localhost:3000/bridge-tokens \
-  -H "x-session-id: YOUR_SESSION_ID" \
-  -H "Content-Type: application/json" \
-  -d '{"resource": "YOUR_SPACE_DID"}'
-
-
-```
-
-alternatively, check server logs to see what failed. send bugs to maintainers or open an issue documenting the failure
-
-## Conclusion
-
-This end-to-end workflow successfully demonstrates:
-
-1. **Bridge token generation** using admin delegations
-2. **CAR file creation** and CID extraction
-3. **S3 pre-signed URL** acquisition and upload
-4. **Upload registration** with Storacha
-5. **Complete file lifecycle** from local file to Storacha storage
-
-The bridge token system should be working correctly and can handle the complete file upload workflow from start to finish. 
