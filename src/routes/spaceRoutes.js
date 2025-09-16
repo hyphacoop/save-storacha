@@ -24,6 +24,7 @@ import { ensureAuthenticated } from './authRoutes.js'; // Import shared middlewa
 import { logger } from '../lib/logger.js';
 import { getClient, getAdminClient } from '../lib/w3upClient.js';
 import { getDelegationsForUser, getSession, getAdminSpaces, getUserPrincipal } from '../lib/store.js';
+import { getDatabase } from '../lib/db.js';
 import { StoreMemory } from '@storacha/client/stores/memory';
 import { create } from '@storacha/client';
 import { CarReader } from '@ipld/car/reader';
@@ -31,6 +32,41 @@ import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
 
 const router = express.Router();
+
+/**
+ * Helper function to resolve space name from various sources
+ * @param {string} spaceDid - The space DID
+ * @param {string|null} spaceName - The space name from delegation (might be null)
+ * @returns {string} Resolved space name or spaceDid as fallback
+ */
+function resolveSpaceName(spaceDid, spaceName) {
+    // If spaceName is already available, use it
+    if (spaceName) {
+        return spaceName;
+    }
+
+    // Try to look up from admin_spaces table
+    try {
+        const db = getDatabase();
+        const adminSpace = db.prepare(`
+            SELECT spaceName FROM admin_spaces
+            WHERE spaceDid = ? AND spaceName IS NOT NULL
+            LIMIT 1
+        `).get(spaceDid);
+
+        if (adminSpace && adminSpace.spaceName) {
+            return adminSpace.spaceName;
+        }
+    } catch (error) {
+        logger.warn('Could not lookup space name from admin_spaces', {
+            spaceDid,
+            error: error.message
+        });
+    }
+
+    // Final fallback to DID
+    return spaceDid;
+}
 
 /**
  * Flexible authentication middleware for space routes
@@ -128,9 +164,10 @@ router.get('/', flexibleAuth, async (req, res) => {
                 !d.expiresAt || d.expiresAt > now
             );
 
+            // Create delegated spaces list with proper name resolution
             const delegatedSpaces = activeDelegations.map(d => ({
                 did: d.spaceDid,
-                name: d.spaceName || d.spaceDid,
+                name: resolveSpaceName(d.spaceDid, d.spaceName),
                 isAdmin: false
             }));
 
@@ -156,9 +193,10 @@ router.get('/', flexibleAuth, async (req, res) => {
                 !d.expiresAt || d.expiresAt > now
             );
 
+            // Create spaces list with proper name resolution
             spaces = activeDelegations.map(d => ({
                 did: d.spaceDid,
-                name: d.spaceName || d.spaceDid,
+                name: resolveSpaceName(d.spaceDid, d.spaceName),
                 isAdmin: false
             }));
         }
