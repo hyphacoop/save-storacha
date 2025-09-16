@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS delegations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userDid TEXT NOT NULL,
     spaceDid TEXT NOT NULL,
+    spaceName TEXT,
     delegationCid TEXT NOT NULL,
     delegationCar TEXT NOT NULL,
     createdAt INTEGER NOT NULL,
