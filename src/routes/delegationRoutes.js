@@ -43,6 +43,26 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         // Set the current space for the client
         await client.setCurrentSpace(spaceDid);
 
+        // Get space details to retrieve the space name
+        let spaceName = null;
+        try {
+            const spaces = client.spaces();
+            const space = spaces.find(s => s.did() === spaceDid);
+            if (space) {
+                spaceName = space.name || spaceDid;
+            } else {
+                // If space is not loaded, try to add it and get its name
+                const addedSpace = await client.addSpace(spaceDid);
+                spaceName = addedSpace?.name || spaceDid;
+            }
+        } catch (spaceError) {
+            logger.warn('Could not retrieve space name during delegation creation', {
+                spaceDid,
+                error: spaceError.message
+            });
+            spaceName = spaceDid; // Fallback to DID
+        }
+
         // Generate (or retrieve) a principal for the user using the same method as token generation
         const secretBytes = new TextEncoder().encode(userDid);
         const { digest } = await sha256.digest(secretBytes);
@@ -100,12 +120,13 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         const delegationCar = Buffer.concat(carChunks);
         const delegationCarString = base64.encode(delegationCar);
 
-        // Store delegation with admin tracking for multi-admin support
-        await storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime, adminEmail);
+        // Store delegation with admin tracking and space name for multi-admin support
+        await storeDelegation(userDid, spaceDid, delegation.cid.toString(), delegationCarString, expirationTime, adminEmail, spaceName);
 
         logger.info('Delegation created successfully', {
             userDid,
             spaceDid,
+            spaceName,
             principalDid: userPrincipal.did(),
             delegationCid: delegation.cid.toString(),
             expiresAt: new Date(expirationTime).toISOString(),

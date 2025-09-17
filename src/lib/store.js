@@ -481,7 +481,7 @@ export async function getUserPrincipal(userDid) {
  * - Multi-admin support with admin tracking
  */
 
-export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar, expiresAt = null, createdBy = null) {
+export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar, expiresAt = null, createdBy = null, spaceName = null) {
     // In dev mode, don't store delegations - they come from dev cache
     if (isDevAuth()) {
         return;
@@ -490,6 +490,7 @@ export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar,
     const delegation = {
         userDid,
         spaceDid,
+        spaceName,
         delegationCid,
         delegationCar,
         expiresAt,
@@ -508,10 +509,10 @@ export function storeDelegation(userDid, spaceDid, delegationCid, delegationCar,
         const db = getDatabase();
         const now = Date.now();
         db.prepare(`
-            INSERT OR REPLACE INTO delegations 
-            (userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, createdAt, updatedAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(userDid, spaceDid, delegationCid, delegationCar, expiresAt, createdBy, now, now);
+            INSERT OR REPLACE INTO delegations
+            (userDid, spaceDid, spaceName, delegationCid, delegationCar, expiresAt, createdBy, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(userDid, spaceDid, spaceName, delegationCid, delegationCar, expiresAt, createdBy, now, now);
         
         logger.debug('Delegation stored in database', { 
             userDid, 
@@ -554,7 +555,7 @@ export function getDelegationsForUser(userDid) {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT spaceDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
+            SELECT spaceDid, spaceName, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             WHERE userDid = ?
             ORDER BY createdAt DESC
@@ -579,7 +580,7 @@ export function getDelegationsForSpace(spaceDid) {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT userDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
+            SELECT userDid, spaceName, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             WHERE spaceDid = ?
             ORDER BY createdAt DESC
@@ -663,7 +664,7 @@ export async function loadDelegationsFromDatabase() {
     try {
         const db = getDatabase();
         const delegations = db.prepare(`
-            SELECT userDid, spaceDid, delegationCid, delegationCar, createdAt, expiresAt, createdBy
+            SELECT userDid, spaceDid, spaceName, delegationCid, delegationCar, createdAt, expiresAt, createdBy
             FROM active_delegations
             ORDER BY createdAt DESC
         `).all();
