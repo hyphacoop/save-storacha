@@ -41,8 +41,42 @@ export async function createAndAuthorizeNewClient(email) {
     const client = await createClient({ principal, store });
 
     logger.info('Starting interactive login flow', { email });
-    await client.login(email);
+    const account = await client.login(email);
     logger.info('Interactive login successful', { email });
+
+    // Capture storage plan product information for admin account
+    let planProduct = null;
+    if (account && account.plan && typeof account.plan.get === 'function') {
+        try {
+            logger.info('PLAN INFO - Getting plan for new admin onboarding', { email });
+            const planInfo = await account.plan.get();
+
+            if (planInfo && planInfo.ok && planInfo.ok.product) {
+                planProduct = planInfo.ok.product;
+                logger.info('PLAN INFO - Successfully captured plan product', {
+                    email,
+                    planProduct
+                });
+            } else {
+                logger.warn('PLAN INFO - Plan response missing product field', {
+                    email,
+                    planInfo: JSON.stringify(planInfo, null, 2)
+                });
+            }
+        } catch (planError) {
+            logger.warn('PLAN INFO - Failed to retrieve plan information', {
+                email,
+                error: planError.message
+            });
+        }
+    } else {
+        logger.warn('PLAN INFO - Account object or plan.get() method not available', {
+            email,
+            hasAccount: !!account,
+            hasPlan: !!(account && account.plan),
+            hasPlanGet: !!(account && account.plan && typeof account.plan.get === 'function')
+        });
+    }
 
     const archive = principal.toArchive();
     const serializableArchive = {
@@ -54,7 +88,7 @@ export async function createAndAuthorizeNewClient(email) {
     }
     const principalKey = JSON.stringify(serializableArchive);
 
-    return { client, principalKey };
+    return { client, principalKey, planProduct };
 }
 
 /**

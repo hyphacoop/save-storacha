@@ -114,11 +114,13 @@ CREATE TABLE IF NOT EXISTS admin_agents (
     agentData TEXT NOT NULL,
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
-    status TEXT CHECK(status IN ('pending', 'active', 'failed')) NOT NULL DEFAULT 'pending'
+    status TEXT CHECK(status IN ('pending', 'active', 'failed')) NOT NULL DEFAULT 'pending',
+    planProduct TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_agents_email ON admin_agents(adminEmail);
 CREATE INDEX IF NOT EXISTS idx_admin_agents_status ON admin_agents (status);
+CREATE INDEX IF NOT EXISTS idx_admin_agents_planProduct ON admin_agents(planProduct);
 
 
 -- =============================================================================
