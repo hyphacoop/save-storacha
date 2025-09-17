@@ -321,7 +321,7 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
     const db = getDatabase();
     try {
         logger.info('BACKGROUND: Starting new admin onboarding', { email });
-        const { client, principalKey } = await createAndAuthorizeNewClient(email);
+        const { client, principalKey, planProduct } = await createAndAuthorizeNewClient(email);
 
         // After authorizing, we must claim delegations to get access to spaces
         await client.capability.access.claim();
@@ -330,11 +330,17 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
         // Onboarding was successful, update the agent to active and store the key
         const now = Date.now();
         db.prepare(`
-            UPDATE admin_agents 
-            SET agentData = ?, status = 'active', updatedAt = ? 
+            UPDATE admin_agents
+            SET agentData = ?, status = 'active', updatedAt = ?, planProduct = ?
             WHERE adminEmail = ? AND status = 'pending'
-        `).run(principalKey, now, email);
+        `).run(principalKey, now, planProduct, email);
         logger.info('BACKGROUND: Stored new server-side agent key and marked as active', { email });
+
+        if (planProduct) {
+            logger.info('BACKGROUND: Stored plan product for admin', { email, planProduct });
+        } else {
+            logger.warn('BACKGROUND: No plan product to store for admin', { email });
+        }
 
         // Ensure the did_email_mapping is created or updated
         db.prepare('INSERT OR REPLACE INTO did_email_mapping (email, did, createdAt) VALUES (?, ?, ?)').run(email, did, now);

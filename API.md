@@ -357,7 +357,7 @@ Get total storage usage across all spaces for the authenticated admin.
 
 **Required header:** `x-session-id` (admin session ID)
 
-**Description:** Returns the total storage usage for all spaces owned by the admin, as well as per-space usage breakdown.
+**Description:** Returns the total storage usage for all spaces owned by the admin, as well as per-space usage breakdown and the admin's plan product identifier.
 
 **Request:**
 ```bash
@@ -383,7 +383,8 @@ curl -H "x-session-id: your-session-id" \
         "human": "0.0112 MB"
       }
     }
-  ]
+  ],
+  "planProduct": "did:web:starter.web3.storage"
 }
 ```
 

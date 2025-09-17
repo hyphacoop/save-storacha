@@ -22,7 +22,7 @@ import express from 'express';
 import * as SpaceService from '../services/spaceService.js';
 import { ensureAuthenticated } from './authRoutes.js'; // Import shared middleware
 import { logger } from '../lib/logger.js';
-import { getClient, getAdminClient } from '../lib/w3upClient.js';
+import { getAdminClient } from '../lib/adminClientManager.js';
 import { getDelegationsForUser, getSession, getAdminSpaces, getUserPrincipal } from '../lib/store.js';
 import { getDatabase } from '../lib/db.js';
 import { StoreMemory } from '@storacha/client/stores/memory';
@@ -441,7 +441,8 @@ router.get('/usage', flexibleAuth, async (req, res) => {
  *         "human": "1.0 MB"
  *       }
  *     }
- *   ]
+ *   ],
+ *   "planProduct": "did:web:starter.web3.storage"
  * }
  */
 router.get('/account-usage', ensureAuthenticated, async (req, res) => {
@@ -449,92 +450,101 @@ router.get('/account-usage', ensureAuthenticated, async (req, res) => {
 
     try {
         logger.info('Account usage request received', { adminEmail });
-        
-        // Use admin-specific client for multi-admin support
-        let client;
+
+        // Get plan product for the admin
+        let planProduct = null;
         try {
-            client = await getAdminClient(adminEmail);
-            logger.info('Using admin-specific client for account usage', { adminEmail });
+            const db = getDatabase();
+            const result = db.prepare('SELECT planProduct FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+            planProduct = result?.planProduct || null;
+            if (planProduct) {
+                logger.info('Retrieved plan product for admin', { adminEmail, planProduct });
+            } else {
+                logger.info('No plan product found for admin', { adminEmail });
+            }
         } catch (error) {
-            // Fallback to global client for backward compatibility
-            client = getClient();
-            logger.info('Using global client for account usage (fallback)', { adminEmail });
-        }
-        
-        // Get all spaces for the admin
-        const spaces = getAdminSpaces(adminEmail);
-        if (!spaces || spaces.length === 0) {
-            return res.json({
-                totalUsage: {
-                    bytes: 0,
-                    mb: 0,
-                    human: "0 MB"
-                },
-                spaces: []
+            logger.warn('Failed to retrieve plan product for admin', {
+                adminEmail,
+                error: error.message
             });
         }
 
-        // Get usage for each space
-        const spaceUsages = [];
+        const client = await getAdminClient(adminEmail);
+        logger.info('Using admin-specific client for account usage', { adminEmail });
+        // Get all spaces for the admin
+        const spaces = getAdminSpaces(adminEmail);
+        
         let totalBytes = 0;
+        let spaceUsages = [];
 
-        for (const space of spaces) {
-            try {
-                // Get usage report for all time
-                const period = { from: new Date(0), to: new Date() };
-                const usage = await client.capability.usage.report(space.did, period);
-                
-                // Extract the 'final' value from the usage report
-                let finalBytes = 0;
-                if (usage && usage[Object.keys(usage)[0]] && usage[Object.keys(usage)[0]].size && typeof usage[Object.keys(usage)[0]].size.final === 'number') {
-                    finalBytes = usage[Object.keys(usage)[0]].size.final;
+        if (spaces && spaces.length > 0) {
+            // Get usage for each space
+            for (const space of spaces) {
+                try {
+                    // Get usage report for all time
+                    const period = { from: new Date(0), to: new Date() };
+                    const usage = await client.capability.usage.report(space.did, period);
+                    
+                    // Extract the 'final' value from the usage report
+                    let finalBytes = 0;
+                    if (usage && usage[Object.keys(usage)[0]] && usage[Object.keys(usage)[0]].size && typeof usage[Object.keys(usage)[0]].size.final === 'number') {
+                        finalBytes = usage[Object.keys(usage)[0]].size.final;
+                    }
+                    
+                    const finalMB = +(finalBytes / 1048576).toFixed(4);
+                    const human = `${finalMB} MB`;
+                    
+                    spaceUsages.push({
+                        spaceDid: space.did,
+                        name: space.name,
+                        usage: {
+                            bytes: finalBytes,
+                            mb: finalMB,
+                            human
+                        }
+                    });
+
+                    totalBytes += finalBytes;
+                } catch (error) {
+                    logger.error('Failed to get usage for space', { 
+                        adminEmail, 
+                        spaceDid: space.did, 
+                        error: error.message 
+                    });
+                    // Continue with other spaces even if one fails
+                    spaceUsages.push({
+                        spaceDid: space.did,
+                        name: space.name,
+                        error: error.message,
+                        usage: {
+                            bytes: 0,
+                            mb: 0,
+                            human: "0 MB"
+                        }
+                    });
                 }
-                
-                const finalMB = +(finalBytes / 1048576).toFixed(4);
-                const human = `${finalMB} MB`;
-                
-                spaceUsages.push({
-                    spaceDid: space.did,
-                    name: space.name,
-                    usage: {
-                        bytes: finalBytes,
-                        mb: finalMB,
-                        human
-                    }
-                });
-
-                totalBytes += finalBytes;
-            } catch (error) {
-                logger.error('Failed to get usage for space', { 
-                    adminEmail, 
-                    spaceDid: space.did, 
-                    error: error.message 
-                });
-                // Continue with other spaces even if one fails
-                spaceUsages.push({
-                    spaceDid: space.did,
-                    name: space.name,
-                    error: error.message,
-                    usage: {
-                        bytes: 0,
-                        mb: 0,
-                        human: "0 MB"
-                    }
-                });
             }
         }
 
         const totalMB = +(totalBytes / 1048576).toFixed(4);
         const totalHuman = `${totalMB} MB`;
 
-        res.json({
+        // Build response object
+        const response = {
             totalUsage: {
                 bytes: totalBytes,
                 mb: totalMB,
                 human: totalHuman
             },
             spaces: spaceUsages
-        });
+        };
+
+        // Add plan product if available
+        if (planProduct) {
+            response.planProduct = planProduct;
+        }
+
+        res.json(response);
 
     } catch (error) {
         logger.error('Failed to get account usage', { 
