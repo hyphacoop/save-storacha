@@ -1,7 +1,7 @@
 import express from 'express';
 import { ensureAuthenticated } from './authRoutes.js';
 import { logger } from '../lib/logger.js';
-import { getClient, getAdminClient } from '../lib/w3upClient.js';
+import { getAdminClient } from '../lib/adminClientManager.js';
 import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
 import { parse as parseDID } from '@ipld/dag-ucan/did';
