@@ -108,10 +108,10 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
         if (!adminAgent || adminAgent.status !== 'active') {
             throw new Error(`No active admin agent found for ${adminEmail}`);
         }
-        
-        // Create the admin's client (which has delegations loaded from login)
-        const { getAdminClient } = await import('./adminClientManager.js');
-        client = await getAdminClient(adminEmail, adminAgent.agentData);
+
+        // Get the admin's client with their loaded delegations from login
+        const { getClientForPrincipal } = await import('./adminClientManager.js');
+        client = await getClientForPrincipal(adminAgent.agentData);
         
         // Ensure we have the latest delegations
         try {

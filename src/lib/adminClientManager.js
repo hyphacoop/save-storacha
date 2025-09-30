@@ -13,7 +13,7 @@ const clientCache = new Map();
  * @param {string} principalKey - The private key string for the agent.
  * @returns {Promise<import('@web-storage/w3up-client').Client>}
  */
-async function getClientForPrincipal(principalKey) {
+export async function getClientForPrincipal(principalKey) {
     const archive = JSON.parse(principalKey);
     const restoredArchive = {
         id: archive.id,
