@@ -277,7 +277,7 @@ export async function requestAdminLoginViaW3Up(email, did, sessionId) {
         // STEP 2: Store DID-email mapping (regardless of verification status)
         const db = getDatabase();
         db.prepare(`
-            INSERT OR REPLACE INTO did_email_mapping (did, email, createdAt)
+            INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt)
             VALUES (?, ?, ?)
         `).run(did, email, Date.now());
         logger.info('MAPPING - Ensured DID-email mapping exists', { did, email });
@@ -343,7 +343,7 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
         }
 
         // Ensure the did_email_mapping is created or updated
-        db.prepare('INSERT OR REPLACE INTO did_email_mapping (email, did, createdAt) VALUES (?, ?, ?)').run(email, did, now);
+        db.prepare('INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt) VALUES (?, ?, ?)').run(did, email, now);
 
         // Now that delegations are claimed, fetch and cache the spaces
         const spaces = await client.spaces();
@@ -369,11 +369,85 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
 }
 
 /**
+ * Handles login for an existing admin from a new device (new DID).
+ * This requires both email verification and DID signature verification.
+ */
+async function handleNewDeviceLogin(email, did, sessionId) {
+    logger.info('BACKGROUND PROCESS - Starting new device verification for existing admin', { email, did, sessionId });
+
+    if (!email || !did || !sessionId) {
+        throw new Error('Email, DID, and SessionId are required for new device login');
+    }
+
+    let isVerified = false;
+    
+    try {
+        const adminClient = await getAdminClient(email);
+        const client = adminClient.getClient();
+
+        logger.info('W3UP CLIENT - Using hydrated client for new device verification', { 
+            email, 
+            agentDid: client.agent.did() 
+        });
+
+        // STEP 1: Check account verification status (email + payment plan)
+        isVerified = await checkAccountVerification(client, email);
+        
+        logger.info('VERIFICATION RESULT - New device', { 
+            email, 
+            did,
+            sessionId, 
+            isVerified,
+            reason: isVerified ? 'Account verified with w3up' : 'Account not verified or no payment plan'
+        });
+
+        // Update email verification status based on account verification
+        updateVerificationStatus(sessionId, 'email', isVerified);
+
+        // STEP 2: Store new DID-email mapping
+        const db = getDatabase();
+        db.prepare(`
+            INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt)
+            VALUES (?, ?, ?)
+        `).run(did, email, Date.now());
+        logger.info('MAPPING - Registered new DID for existing admin', { did, email });
+
+        // STEP 3: Background space sync (only if account is verified)
+        if (isVerified) {
+            await syncSpacesInBackground(client, email, sessionId);
+        } else {
+            logger.info('SPACES SYNC - Skipping space sync for unverified account', { email, sessionId });
+        }
+        
+        logger.info('✅ NEW DEVICE COMPLETE - Process completed', {
+            email,
+            did,
+            sessionId,
+            verified: isVerified,
+            spaceSyncAttempted: isVerified
+        });
+
+    } catch (error) {
+        logger.error('New device login process failed', { 
+            email, 
+            did,
+            sessionId, 
+            error: error.message, 
+            stack: error.stack 
+        });
+        
+        // Always update email verification status based on what we determined
+        updateVerificationStatus(sessionId, 'email', isVerified);
+    }
+}
+
+/**
  * Handles an admin login, dispatching to the correct flow based on agent status.
  * Includes DID challenge generation for cryptographic verification.
+ * Supports multiple devices (DIDs) per admin.
  */
 export async function handleAdminLogin(email, did) {
-    logger.info('Handling admin login request', { email });
+    logger.info('Handling admin login request', { email, did });
     const db = getDatabase();
     
     // Generate DID challenge for cryptographic verification
@@ -384,14 +458,39 @@ export async function handleAdminLogin(email, did) {
     const adminAgent = db.prepare('SELECT agentData, status FROM admin_agents WHERE adminEmail = ?').get(email);
 
     if (adminAgent && adminAgent.status === 'active') {
-        // --- Subsequent Login Flow ---
-        const loginResult = await handleSubsequentLogin(email, did, adminAgent.agentData);
-        return {
-            ...loginResult,
-            challenge,
-            challengeId,
-            requiresSignature: true
-        };
+        // --- Existing Admin: Check if this DID is registered ---
+        const didMapping = db.prepare('SELECT did FROM did_email_mapping WHERE email = ? AND did = ?').get(email, did);
+        
+        if (didMapping) {
+            // Known DID - Subsequent login from known device
+            logger.info('Known device login for existing admin', { email, did });
+            const loginResult = await handleSubsequentLogin(email, did, adminAgent.agentData);
+            return {
+                ...loginResult,
+                challenge,
+                challengeId,
+                requiresSignature: true
+            };
+        } else {
+            // New DID - Login from new device for existing admin
+            logger.info('New device login for existing admin', { email, did });
+            
+            // Create unverified session for this new device
+            const { sessionId } = createSession(email, did, {}, false);
+            
+            // Start background verification process for new device
+            handleNewDeviceLogin(email, did, sessionId);
+            
+            return {
+                message: 'New device detected. Please verify your email and sign the challenge to complete authentication.',
+                sessionId,
+                did,
+                verified: false,
+                challenge,
+                challengeId,
+                requiresSignature: true
+            };
+        }
 
     } else {
         // --- First-Time or Failed Onboarding Flow ---
@@ -401,7 +500,7 @@ export async function handleAdminLogin(email, did) {
             db.prepare('DELETE FROM admin_agents WHERE adminEmail = ?').run(email);
         }
         
-        logger.info('New admin or retrying onboarding. Returning unverified session.', { email });
+        logger.info('New admin or retrying onboarding. Returning unverified session.', { email, did });
         
         // Create a 'pending' record to lock this user's onboarding process
         const now = Date.now();
@@ -429,13 +528,15 @@ export async function handleAdminLogin(email, did) {
  * Handles a subsequent login for an existing, active admin.
  */
 async function handleSubsequentLogin(email, did, principalKey) {
-    logger.info('Performing subsequent login for active admin', { email });
+    logger.info('Performing subsequent login for active admin', { email, did });
     const db = getDatabase();
 
-    // Security Check: Verify the provided DID matches the one on record
-    const mapping = db.prepare('SELECT did FROM did_email_mapping WHERE email = ?').get(email);
-    if (!mapping || mapping.did !== did) {
-        throw new Error('DID does not match the registered DID for this email.');
+    // Security Check: Verify this DID is registered for this email
+    // Note: An admin can have multiple DIDs (multiple devices)
+    const mapping = db.prepare('SELECT did FROM did_email_mapping WHERE email = ? AND did = ?').get(email, did);
+    if (!mapping) {
+        logger.warn('DID not registered for this email', { email, did });
+        throw new Error('This device/DID is not registered for this email. Please login from a new device to add it to your account.');
     }
 
     // The getSpacesForExistingAdmin function will now handle the client creation and space fetching
@@ -449,7 +550,7 @@ async function handleSubsequentLogin(email, did, principalKey) {
         spaces: spacesList,
         verified: true,
     };
-    logger.info('Login response for subsequent login', { email, response: loginResponse });
+    logger.info('Login response for subsequent login', { email, did, sessionId });
     return loginResponse;
 }
 
