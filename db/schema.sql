@@ -52,14 +52,18 @@ CREATE INDEX IF NOT EXISTS idx_delegations_createdBy_spaceDid ON delegations(cre
 -- =============================================================================
 -- Table: did_email_mapping
 -- Maps user DIDs to their email addresses for identification.
+-- Supports multiple DIDs per email (multiple devices per admin).
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS did_email_mapping (
-    did TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    did TEXT NOT NULL,
     email TEXT NOT NULL,
-    createdAt INTEGER NOT NULL
+    createdAt INTEGER NOT NULL,
+    UNIQUE(email, did)
 );
 
 CREATE INDEX IF NOT EXISTS idx_did_email_mapping_email ON did_email_mapping(email);
+CREATE INDEX IF NOT EXISTS idx_did_email_mapping_did ON did_email_mapping(did);
 
 
 -- =============================================================================
