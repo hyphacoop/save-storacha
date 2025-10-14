@@ -1,351 +1,44 @@
-import { getClient } from '../lib/w3upClient.js';
 import {
     createSession,
-    storeAdminServiceDidData,
-    storeCachedSpaces,
     storeAdminSpace,
-    getAdminSpaces,
     updateVerificationStatus
 } from '../lib/store.js';
-import * as Signer from '@ucanto/principal/ed25519';
-import { CarWriter } from '@ipld/car';
-import { base64 } from "multiformats/bases/base64";
 import { logger } from '../lib/logger.js';
 import { getDatabase } from '../lib/db.js';
-import { getAdminClient, createAndAuthorizeNewClient } from '../lib/adminClientManager.js';
+import { getAdminClient, createAndAuthorizeDeviceAgent } from '../lib/adminClientManager.js';
 import * as DidAuthService from './didAuthService.js';
 
 /**
- * Check if a w3up account is verified and has a valid payment plan
- * For new accounts, this will trigger email verification
- */
-async function checkAccountVerification(client, email) {
-    try {
-        logger.info('VERIFICATION - Checking account verification status', { email });
-        
-        // Method 1: Try to access account information
-        // A verified account should be able to access basic account info
-        try {
-            const accounts = client.accounts();
-            if (accounts && accounts.length > 0) {
-                logger.info('VERIFICATION - Account found via accounts()', { 
-                    email, 
-                    accountCount: accounts.length 
-                });
-                return true;
-            }
-        } catch (accountError) {
-            logger.debug('VERIFICATION - accounts() method not available or failed', { 
-                email, 
-                error: accountError.message 
-            });
-        }
-
-        // Method 2: Try to list spaces - if this works, the account is verified
-        // Even if they have no spaces, a verified account can call this method
-        try {
-            const spaces = client.spaces();
-            logger.info('VERIFICATION - Successfully called spaces(), account is verified', { 
-                email, 
-                spaceCount: spaces.length 
-            });
-            return true;
-        } catch (spacesError) {
-            logger.info('VERIFICATION - spaces() call failed, attempting email verification', { 
-                email, 
-                error: spacesError.message 
-            });
-            
-            // Method 3: If spaces() fails, try to trigger email verification
-            try {
-                logger.info('VERIFICATION - Triggering email verification', { email });
-                await client.login(email);
-                logger.info('VERIFICATION - Email verification initiated, user needs to check email', { email });
-                return false; // Return false until user verifies email
-            } catch (loginError) {
-                logger.error('VERIFICATION - Email verification failed', { 
-                    email, 
-                    error: loginError.message 
-                });
-                return false;
-            }
-        }
-
-    } catch (error) {
-        logger.error('VERIFICATION - Account verification check failed', { 
-            email, 
-            error: error.message 
-        });
-        return false;
-    }
-}
-
-/**
- * Background space sync for subsequent logins - refresh cache only
- * This preserves existing verification status and only updates space cache
- */
-async function syncSpacesInBackgroundOnly(email, sessionId) {
-    try {
-        logger.info('SPACE REFRESH - Starting space cache refresh for verified account', { email, sessionId });
-
-        const adminClient = await getAdminClient(email);
-        const client = adminClient.getClient();
-
-        // For subsequent logins, we need to ensure the client is authorized with w3up
-        // This won't trigger a new email loop but authorizes the agent for this session
-        try {
-            await client.login(email);
-            logger.info('SPACE REFRESH - Client authorized with w3up for subsequent login', { email });
-            // After login, we must explicitly claim the delegations to populate the agent's store
-            await client.capability.access.claim();
-            logger.info('SPACE REFRESH - Claimed delegations from w3up', { email });
-        } catch (error) {
-            logger.warn('SPACE REFRESH - Client login or claim call failed. Continuing.', {
-                email,
-                error: error.message
-            });
-        }
-
-        // Just sync spaces, don't touch verification status
-        await syncSpacesInBackground(client, email, sessionId);
-        
-        logger.info('✅ SPACE REFRESH - Cache refresh completed for verified account', {
-            email,
-            sessionId
-        });
-
-    } catch (error) {
-        logger.error('SPACE REFRESH - Cache refresh failed', { 
-            email, 
-            sessionId, 
-            error: error.message 
-        });
-        // Don't throw - cache refresh failure shouldn't affect anything
-    }
-}
-
-/**
- * Background space sync function - purely for caching
- * This runs independently of verification status
- */
-async function syncSpacesInBackground(client, email, sessionId) {
-    try {
-        logger.info('SPACES SYNC - Starting background space synchronization', { email, sessionId });
-
-        const accountSpaces = await client.spaces();
-        logger.info('SPACES SYNC - Retrieved spaces from w3up client', { 
-            email,
-            spaceCount: accountSpaces.length
-        });
-
-        const db = getDatabase();
-        const spacesList = [];
-        
-        for (const space of accountSpaces) {
-            const spaceName = space.name || space.did();
-            const spaceDid = space.did();
-            
-            storeAdminSpace(email, spaceDid, spaceName);
-            
-            spacesList.push({
-                did: spaceDid,
-                name: spaceName
-            });
-            
-            logger.info('SPACES SYNC - Cached space for admin', { email, spaceDid, spaceName });
-        }
-
-        if (accountSpaces.length > 0) {
-            await client.setCurrentSpace(accountSpaces[0].did());
-        }
-
-        storeCachedSpaces(email, spacesList);
-        
-        logger.info('✅ SPACES SYNC - Background space sync completed', {
-            email,
-            sessionId,
-            spacesCached: spacesList.length
-        });
-
-        return spacesList;
-
-    } catch (error) {
-        logger.error('SPACES SYNC - Background space sync failed', { 
-            email, 
-            sessionId, 
-            error: error.message 
-        });
-        // Don't throw - space sync failure shouldn't affect verification status
-        return [];
-    }
-}
-
-/**
- * Handles the authorization setup after successful Storacha email confirmation
- * This function configures the admin's access to their assigned spaces and creates a session.
- * It ensures that each admin only has access to spaces that have been explicitly associated with their account.
- */
-export async function handleAdminW3UpAuthorization(adminEmail, adminDid, client, providedDid = null) {
-    logger.info('Setting up authorization', { adminEmail });
-    if (!client) {
-        throw new Error('Client must be provided to handleAdminW3UpAuthorization');
-    }
-
-    try {
-        // Only return spaces that have been explicitly mapped to this admin's email
-        // This maintains proper space isolation between different admin accounts
-        const explicitlyMappedSpaces = getAdminSpaces(adminEmail);
-        let spaces = [];
-        
-        if (explicitlyMappedSpaces.length > 0) {
-            // Admin has explicitly mapped spaces - use those
-            spaces = explicitlyMappedSpaces.map(space => ({
-                name: space.spaceName || space.name,
-                did: space.spaceDid || space.did
-            }));
-            logger.info('Using explicitly mapped spaces for admin', { 
-                adminEmail, 
-                spaceCount: spaces.length 
-            });
-        } else {
-            // No spaces mapped to this admin yet - this is expected for new admins
-            logger.info('No spaces mapped to admin yet', { adminEmail });
-            spaces = [];
-        }
-        
-        // Cache the mapped spaces
-        if (spaces.length > 0) {
-            storeCachedSpaces(adminEmail, spaces);
-            logger.info('Cached mapped spaces for admin', { 
-                count: spaces.length,
-                spaceNames: spaces.map(s => s.name)
-            });
-        }
-
-        // Store admin data without service DID (simplified)
-        storeAdminServiceDidData(adminEmail, adminDid, null, null);
-        
-        // Create session with the provided DID if available, otherwise use adminDid
-        const { sessionId } = createSession(adminEmail, providedDid || adminDid);
-        logger.info('Authorization complete with explicit mapping', { sessionId });
-
-        return { sessionId };
-
-    } catch (error) {
-        logger.error('Authorization failed', { adminEmail, error: error.message });
-        throw error;
-    }
-}
-
-/**
- * Background verification and space sync function
- * This separates email/account verification from space fetching
- * Verification is based on w3up account status, not space availability
- */
-export async function requestAdminLoginViaW3Up(email, did, sessionId) {
-    logger.info('BACKGROUND PROCESS - Starting background verification and space sync', { email, did, sessionId });
-
-    if (!email || !did || !sessionId) {
-        throw new Error('Email, DID, and SessionId are required for background processing');
-    }
-
-    let isVerified = false;
-    
-    try {
-        const adminClient = await getAdminClient(email);
-        const client = adminClient.getClient();
-
-        logger.info('W3UP CLIENT - Using hydrated client for verification and sync', { 
-            email, 
-            agentDid: client.agent.did() 
-        });
-
-        // STEP 1: Check account verification status (email + payment plan)
-        // This is independent of whether they have spaces or not
-        isVerified = await checkAccountVerification(client, email);
-        
-        logger.info('VERIFICATION RESULT', { 
-            email, 
-            sessionId, 
-            isVerified,
-            reason: isVerified ? 'Account verified with w3up' : 'Account not verified or no payment plan'
-        });
-
-        // Update email verification status based on account verification
-        updateVerificationStatus(sessionId, 'email', isVerified);
-
-        // STEP 2: Store DID-email mapping (regardless of verification status)
-        const db = getDatabase();
-        db.prepare(`
-            INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt)
-            VALUES (?, ?, ?)
-        `).run(did, email, Date.now());
-        logger.info('MAPPING - Ensured DID-email mapping exists', { did, email });
-
-        // STEP 3: Background space sync (only if account is verified)
-        // This is pure caching and doesn't affect verification status
-        if (isVerified) {
-            await syncSpacesInBackground(client, email, sessionId);
-        } else {
-            logger.info('SPACES SYNC - Skipping space sync for unverified account', { email, sessionId });
-        }
-        
-        logger.info('✅ BACKGROUND COMPLETE - Process completed', {
-            email,
-            sessionId,
-            verified: isVerified,
-            spaceSyncAttempted: isVerified
-        });
-
-    } catch (error) {
-        logger.error('Background process failed', { 
-            email, 
-            sessionId, 
-            error: error.message, 
-            stack: error.stack 
-        });
-        
-        // Always update email verification status based on what we determined
-        // Don't let space sync errors affect verification
-        updateVerificationStatus(sessionId, 'email', isVerified);
-    }
-}
-
-/**
- * Asynchronously onboards a new admin in the background. It now manages the agent's status.
+ * Onboards a new admin with a device agent.
+ * Each device gets its own agent that requires email verification.
  * @param {string} email The email of the new admin.
- * @param {string} did The admin's client-side DID.
+ * @param {string} did The device DID.
  * @param {string} sessionId The session ID to update upon completion.
  */
 async function onboardNewAdminInBackground(email, did, sessionId) {
     const db = getDatabase();
     try {
-        logger.info('BACKGROUND: Starting new admin onboarding', { email });
-        const { client, principalKey, planProduct } = await createAndAuthorizeNewClient(email);
+        logger.info('ONBOARD: Starting new admin device onboarding', { email, did });
 
-        // After authorizing, we must claim delegations to get access to spaces
-        await client.capability.access.claim();
-        logger.info('BACKGROUND: Successfully claimed delegations for new admin', { email });
+        // Create device agent with email verification (blocks until verified)
+        const { client, principalKey, planProduct } = await createAndAuthorizeDeviceAgent(email, did);
 
-        // Onboarding was successful, update the agent to active and store the key
+        // Store device agent in database
         const now = Date.now();
         db.prepare(`
-            UPDATE admin_agents
-            SET agentData = ?, status = 'active', updatedAt = ?, planProduct = ?
-            WHERE adminEmail = ? AND status = 'pending'
-        `).run(principalKey, now, planProduct, email);
-        logger.info('BACKGROUND: Stored new server-side agent key and marked as active', { email });
+            INSERT OR REPLACE INTO admin_agents (adminEmail, did, agentData, status, createdAt, updatedAt, planProduct)
+            VALUES (?, ?, ?, 'active', ?, ?, ?)
+        `).run(email, did, principalKey, now, now, planProduct);
+        logger.info('ONBOARD: Stored device agent', { email, did });
 
-        if (planProduct) {
-            logger.info('BACKGROUND: Stored plan product for admin', { email, planProduct });
-        } else {
-            logger.warn('BACKGROUND: No plan product to store for admin', { email });
-        }
+        // Store DID mapping after email verification
+        db.prepare(`
+            INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt)
+            VALUES (?, ?, ?)
+        `).run(did, email, now);
+        logger.info('ONBOARD: Registered verified DID', { did, email });
 
-        // Ensure the did_email_mapping is created or updated
-        db.prepare('INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt) VALUES (?, ?, ?)').run(did, email, now);
-
-        // Now that delegations are claimed, fetch and cache the spaces
+        // Sync spaces
         const spaces = await client.spaces();
         const spacesList = [];
         for (const space of spaces) {
@@ -354,90 +47,85 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
             storeAdminSpace(email, spaceDid, spaceName);
             spacesList.push({ did: spaceDid, name: spaceName });
         }
-        logger.info(`BACKGROUND: Cached ${spacesList.length} initial spaces for new admin`, { email });
+        logger.info(`ONBOARD: Cached ${spacesList.length} spaces for admin`, { email });
 
-        // Finally, mark email as verified since onboarding succeeded
+        // Mark email as verified
         updateVerificationStatus(sessionId, 'email', true);
-        logger.info('BACKGROUND: Admin onboarding successful, email verified', { email, sessionId });
+        logger.info('ONBOARD: Device onboarding successful', { email, did, sessionId });
 
     } catch (error) {
-        logger.error('BACKGROUND: Admin onboarding failed', { email, sessionId, error: error.message });
-        // Mark the agent as 'failed' so the user can retry on next login
-        db.prepare("UPDATE admin_agents SET status = 'failed' WHERE adminEmail = ?").run(email);
+        logger.error('ONBOARD: Device onboarding failed', { email, did, sessionId, error: error.message });
         updateVerificationStatus(sessionId, 'email', false);
     }
 }
 
 /**
  * Handles login for an existing admin from a new device (new DID).
- * This requires both email verification and DID signature verification.
+ * Creates a NEW agent for this device with email verification.
  */
 async function handleNewDeviceLogin(email, did, sessionId) {
-    logger.info('BACKGROUND PROCESS - Starting new device verification for existing admin', { email, did, sessionId });
+    logger.info('NEW DEVICE: Starting new device onboarding', { email, did, sessionId });
 
     if (!email || !did || !sessionId) {
         throw new Error('Email, DID, and SessionId are required for new device login');
     }
 
-    let isVerified = false;
-    
+    const db = getDatabase();
+
     try {
-        const adminClient = await getAdminClient(email);
-        const client = adminClient.getClient();
+        // Verify admin exists (check for ANY active agent for this email)
+        const existingAgent = db.prepare('SELECT adminEmail FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
+            .get(email, 'active');
 
-        logger.info('W3UP CLIENT - Using hydrated client for new device verification', { 
-            email, 
-            agentDid: client.agent.did() 
-        });
+        if (!existingAgent) {
+            throw new Error('Admin not found. Please complete onboarding first.');
+        }
 
-        // STEP 1: Check account verification status (email + payment plan)
-        isVerified = await checkAccountVerification(client, email);
-        
-        logger.info('VERIFICATION RESULT - New device', { 
-            email, 
-            did,
-            sessionId, 
-            isVerified,
-            reason: isVerified ? 'Account verified with w3up' : 'Account not verified or no payment plan'
-        });
+        logger.info('NEW DEVICE: Admin verified, creating device agent', { email, did });
 
-        // Update email verification status based on account verification
-        updateVerificationStatus(sessionId, 'email', isVerified);
+        // Create NEW agent for this device with email verification (blocks until verified)
+        const { client, principalKey, planProduct } = await createAndAuthorizeDeviceAgent(email, did);
 
-        // STEP 2: Store new DID-email mapping
-        const db = getDatabase();
+        // Store device agent in database
+        const now = Date.now();
+        db.prepare(`
+            INSERT OR REPLACE INTO admin_agents (adminEmail, did, agentData, status, createdAt, updatedAt, planProduct)
+            VALUES (?, ?, ?, 'active', ?, ?, ?)
+        `).run(email, did, principalKey, now, now, planProduct);
+        logger.info('NEW DEVICE: Stored device agent', { email, did });
+
+        // Store DID mapping after email verification
         db.prepare(`
             INSERT OR IGNORE INTO did_email_mapping (did, email, createdAt)
             VALUES (?, ?, ?)
-        `).run(did, email, Date.now());
-        logger.info('MAPPING - Registered new DID for existing admin', { did, email });
+        `).run(did, email, now);
+        logger.info('NEW DEVICE: Registered verified DID', { did, email });
 
-        // STEP 3: Background space sync (only if account is verified)
-        if (isVerified) {
-            await syncSpacesInBackground(client, email, sessionId);
-        } else {
-            logger.info('SPACES SYNC - Skipping space sync for unverified account', { email, sessionId });
+        // Sync spaces
+        const spaces = await client.spaces();
+        const spacesList = [];
+        for (const space of spaces) {
+            const spaceName = space.name || space.did();
+            const spaceDid = space.did();
+            storeAdminSpace(email, spaceDid, spaceName);
+            spacesList.push({ did: spaceDid, name: spaceName });
         }
-        
-        logger.info('✅ NEW DEVICE COMPLETE - Process completed', {
+        logger.info(`NEW DEVICE: Cached ${spacesList.length} spaces`, { email });
+
+        // Mark email as verified
+        updateVerificationStatus(sessionId, 'email', true);
+        logger.info('✅ NEW DEVICE: Device onboarding successful', { email, did, sessionId });
+
+    } catch (error) {
+        logger.error('NEW DEVICE: Verification failed', {
             email,
             did,
             sessionId,
-            verified: isVerified,
-            spaceSyncAttempted: isVerified
+            error: error.message,
+            stack: error.stack
         });
 
-    } catch (error) {
-        logger.error('New device login process failed', { 
-            email, 
-            did,
-            sessionId, 
-            error: error.message, 
-            stack: error.stack 
-        });
-        
-        // Always update email verification status based on what we determined
-        updateVerificationStatus(sessionId, 'email', isVerified);
+        updateVerificationStatus(sessionId, 'email', false);
     }
 }
 
@@ -449,71 +137,43 @@ async function handleNewDeviceLogin(email, did, sessionId) {
 export async function handleAdminLogin(email, did) {
     logger.info('Handling admin login request', { email, did });
     const db = getDatabase();
-    
+
     // Generate DID challenge for cryptographic verification
     const { challenge, challengeId } = await DidAuthService.generateChallenge(did);
     logger.info('Generated DID challenge for login', { email, did, challengeId });
-    
-    // Check for an existing agent and its status
-    const adminAgent = db.prepare('SELECT agentData, status FROM admin_agents WHERE adminEmail = ?').get(email);
 
-    if (adminAgent && adminAgent.status === 'active') {
-        // --- Existing Admin: Check if this DID is registered ---
-        const didMapping = db.prepare('SELECT did FROM did_email_mapping WHERE email = ? AND did = ?').get(email, did);
-        
-        if (didMapping) {
-            // Known DID - Subsequent login from known device
-            logger.info('Known device login for existing admin', { email, did });
-            const loginResult = await handleSubsequentLogin(email, did, adminAgent.agentData);
-            return {
-                ...loginResult,
-                challenge,
-                challengeId,
-                requiresSignature: true
-            };
-        } else {
-            // New DID - Login from new device for existing admin
-            logger.info('New device login for existing admin', { email, did });
-            
-            // Create unverified session for this new device
-            const { sessionId } = createSession(email, did, {}, false);
-            
-            // Start background verification process for new device
-            handleNewDeviceLogin(email, did, sessionId);
-            
-            return {
-                message: 'New device detected. Please verify your email and sign the challenge to complete authentication.',
-                sessionId,
-                did,
-                verified: false,
-                challenge,
-                challengeId,
-                requiresSignature: true
-            };
-        }
+    // Check if this specific device (email + did) has an active agent
+    const deviceAgent = db.prepare('SELECT adminEmail, did FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
+        .get(email, did, 'active');
 
-    } else {
-        // --- First-Time or Failed Onboarding Flow ---
-        if (adminAgent) {
-            logger.info('Previous admin onboarding was incomplete or failed. Retrying.', { email, status: adminAgent.status });
-            // Clean up the old failed/pending entry to allow a fresh start
-            db.prepare('DELETE FROM admin_agents WHERE adminEmail = ?').run(email);
-        }
-        
-        logger.info('New admin or retrying onboarding. Returning unverified session.', { email, did });
-        
-        // Create a 'pending' record to lock this user's onboarding process
-        const now = Date.now();
-        db.prepare("INSERT INTO admin_agents (adminEmail, status, agentData, createdAt, updatedAt) VALUES (?, 'pending', '', ?, ?)")
-            .run(email, now, now);
-        
+    if (deviceAgent) {
+        // Known device - Subsequent login
+        logger.info('Known device login', { email, did });
+        const loginResult = await handleSubsequentLogin(email, did);
+        return {
+            ...loginResult,
+            challenge,
+            challengeId,
+            requiresSignature: true
+        };
+    }
+
+    // Check if admin exists (any device)
+    const adminExists = db.prepare('SELECT adminEmail FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
+        .get(email, 'active');
+
+    if (adminExists) {
+        // Admin exists, but new device
+        logger.info('New device login for existing admin', { email, did });
+
+        // Create unverified session for this new device
         const { sessionId } = createSession(email, did, {}, false);
 
-        // Start the background process without waiting for it to complete
-        onboardNewAdminInBackground(email, did, sessionId);
+        // Start background verification process for new device
+        handleNewDeviceLogin(email, did, sessionId);
 
         return {
-            message: 'Login initiated. Please check your email to verify your account.',
+            message: 'New device detected. Please verify your email and sign the challenge to complete authentication.',
             sessionId,
             did,
             verified: false,
@@ -522,25 +182,42 @@ export async function handleAdminLogin(email, did) {
             requiresSignature: true
         };
     }
+
+    // New admin - first device
+    logger.info('New admin first device onboarding', { email, did });
+
+    const { sessionId } = createSession(email, did, {}, false);
+
+    // Start the background process without waiting for it to complete
+    onboardNewAdminInBackground(email, did, sessionId);
+
+    return {
+        message: 'Login initiated. Please check your email to verify your account.',
+        sessionId,
+        did,
+        verified: false,
+        challenge,
+        challengeId,
+        requiresSignature: true
+    };
 }
 
 /**
- * Handles a subsequent login for an existing, active admin.
+ * Handles a subsequent login for an existing device.
  */
-async function handleSubsequentLogin(email, did, principalKey) {
-    logger.info('Performing subsequent login for active admin', { email, did });
+async function handleSubsequentLogin(email, did) {
+    logger.info('Performing subsequent login for known device', { email, did });
     const db = getDatabase();
 
     // Security Check: Verify this DID is registered for this email
-    // Note: An admin can have multiple DIDs (multiple devices)
     const mapping = db.prepare('SELECT did FROM did_email_mapping WHERE email = ? AND did = ?').get(email, did);
     if (!mapping) {
         logger.warn('DID not registered for this email', { email, did });
-        throw new Error('This device/DID is not registered for this email. Please login from a new device to add it to your account.');
+        throw new Error('This device/DID is not registered for this email.');
     }
 
-    // The getSpacesForExistingAdmin function will now handle the client creation and space fetching
-    const spacesList = await getSpacesForExistingAdmin(email, principalKey);
+    // Get spaces for this device
+    const spacesList = await getSpacesForExistingDevice(email, did);
 
     const { sessionId } = createSession(email, did, {}, true);
     const loginResponse = {
@@ -554,39 +231,6 @@ async function handleSubsequentLogin(email, did, principalKey) {
     return loginResponse;
 }
 
-/**
- * POST /auth/w3up/logout - Storacha service logout
- * 
- * Attempts to logout from the Storacha service directly, removing
- * any cached account information. This is separate from local session
- * management and affects the underlying Storacha client state.
- * 
- * Use this for complete cleanup of Storacha authentication state.
- */
-export async function logoutFromW3Up() {
-    logger.info('Attempting to logout from Storacha service');
-    try {
-        const client = getClient();
-        const accounts = client.accounts();
-        
-        for (const account of accounts) {
-            const email = account.email;
-            logger.debug('Attempting to remove account', { email });
-            
-            if (typeof account.remove === 'function') {
-                await account.remove();
-                logger.info('Successfully removed account', { email });
-            } else {
-                logger.warn('Account has no remove method', { email });
-            }
-        }
-        
-        return { message: 'Logout successful' };
-    } catch (error) {
-        logger.error('Error during Storacha logout', { error: error.message });
-        throw error;
-    }
-}
 
 // Keep the old function for backward compatibility, but mark as deprecated
 export async function handleDidLogin(did) {
@@ -594,19 +238,19 @@ export async function handleDidLogin(did) {
     throw new Error('Please use handleAdminLogin with both email and DID for security');
 }
 
-async function getSpacesForExistingAdmin(email, principalKey) {
-    const client = await getAdminClient(email, principalKey);
+async function getSpacesForExistingDevice(email, did) {
+    const client = await getAdminClient(email, did);
 
-    // For existing admins, we also need to ensure we have the latest delegations
+    // For existing devices, refresh delegations
     try {
         await client.capability.access.claim();
-        logger.info('Refreshed delegations for existing admin', { email });
+        logger.info('Refreshed delegations for device', { email, did });
     } catch (error) {
-        logger.warn('Could not refresh delegations for existing admin, using cached info.', { email, error: error.message });
+        logger.warn('Could not refresh delegations for device, using cached info.', { email, did, error: error.message });
     }
 
     const spaces = await client.spaces();
-    logger.info(`Found ${spaces.length} spaces for existing admin`, { email });
+    logger.info(`Found ${spaces.length} spaces for device`, { email, did });
 
     // Cache spaces for faster subsequent requests
     const spacesList = [];
@@ -616,7 +260,7 @@ async function getSpacesForExistingAdmin(email, principalKey) {
         storeAdminSpace(email, spaceDid, spaceName);
         spacesList.push({ did: spaceDid, name: spaceName });
     }
-    logger.info(`Refreshed ${spacesList.length} spaces for existing admin`, { email, spacesList });
+    logger.info(`Refreshed ${spacesList.length} spaces for device`, { email, did, spacesList });
 
     return spacesList;
 } 

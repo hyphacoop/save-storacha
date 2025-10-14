@@ -4,12 +4,9 @@ import { logger } from '../lib/logger.js';
 import { getAdminClient } from '../lib/adminClientManager.js';
 import { CarWriter } from '@ipld/car';
 import { base64 } from "multiformats/bases/base64";
-import { parse as parseDID } from '@ipld/dag-ucan/did';
-import { Signer } from '@ucanto/principal/ed25519';
 import { ed25519 } from '@ucanto/principal';
 import { sha256 } from '@ucanto/core';
 import { storeDelegation, getDelegationsForUser, getDelegationsForSpace, storeUserPrincipal, revokeDelegation } from '../lib/store.js';
-import { getDatabase } from '../lib/db.js';
 
 const router = express.Router();
 
@@ -32,13 +29,8 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
             expiresIn
         });
 
-        // Get the w3up client for the currently authenticated admin
-        const db = getDatabase();
-        const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
-        if (!adminAgent || !adminAgent.agentData) {
-            throw new Error('Admin agent not found or not properly configured.');
-        }
-        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        // Get the storacha client for the currently authenticated admin device
+        const client = await getAdminClient(adminEmail, req.userDid);
 
         // Set the current space for the client
         await client.setCurrentSpace(spaceDid);

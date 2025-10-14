@@ -15,7 +15,6 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | POST | /auth/verify | DID signature verification endpoint |
 | GET  | /auth/session | Validate session and check verification status. |
 | POST | /auth/logout | End session |
-| POST | /auth/w3up/logout | Logout from w3up service |
 | GET  | /auth/sessions | List sessions |
 | POST | /auth/sessions/:id/deactivate | Deactivate a session |
 | POST | /auth/sessions/deactivate-all | Deactivate all sessions |
@@ -25,7 +24,6 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | POST | /upload | Upload through token service |
 | POST | /bridge-tokens | Generate bridge tokens for Storacha HTTP API bridge |
 | GET  | /uploads | List uploads for user+space (supports both admin and delegated user access) |
-| GET  | /delegations/user/spaces | Spaces accessible to a user |
 | GET  | /delegations/list | List delegations |
 | POST | /delegations/create | Create delegation |
 | GET  | /delegations/get | Get delegation details |
@@ -244,14 +242,6 @@ curl -X POST -H "x-session-id: your-session-id" \
   http://localhost:3000/auth/logout
 ```
 
-### POST /auth/w3up/logout
-Logout from w3up service.
-
-**Request:**
-```bash
-curl -X POST -H "x-session-id: your-session-id" \
-  http://localhost:3000/auth/w3up/logout
-```
 
 ### GET /auth/sessions
 List all sessions for the authenticated user.
@@ -642,8 +632,7 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
 {
   "error": "No valid delegation found for this space",
   "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
-  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
-  "availableSpaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"]
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
 }
 ```
 
@@ -659,24 +648,6 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
 **Note:** This endpoint uses the system's dual access pattern where admins have direct access to their spaces while delegated users require explicit delegations.
 
 ## Delegations
-
-### GET /delegations/user/spaces
-List spaces accessible to a user.
-
-**Request:**
-```bash
-curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  http://localhost:3000/delegations/user/spaces
-```
-
-**Response:**
-```json
-{
-  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
-  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"],
-  "expiresAt": "2025-06-11T18:16:13.737Z"
-}
-```
 
 ### GET /delegations/list
 List delegations (admin only, requires session).
@@ -881,7 +852,7 @@ This example demonstrates:
 
 ### Complete Example: Delegation and Upload
 
-Here's a complete example of the delegation and upload process using real DIDs and responses from our successful implementation:
+Here's a complete example of the delegation and upload process using real DIDs and responses from our implementation:
 
 #### 1. Login as seen above
 
@@ -929,14 +900,16 @@ curl -X POST -H "x-session-id: 00b3d659c3816cd3ea8ffd6b6cdf8f8a" \
 ```bash
 # Check spaces accessible to the user
 curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  http://localhost:3000/delegations/user/spaces
+  http://localhost:3000/spaces
 
 # Response:
-{
-  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
-  "spaces": ["did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"],
-  "expiresAt": "2025-06-11T18:16:13.737Z"
-}
+[
+  {
+    "did": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+    "name": "Example Space",
+    "isAdmin": false
+  }
+]
 ```
 
 #### 5. Upload File (Method 1: Direct Bridge Upload)
@@ -1072,7 +1045,7 @@ Here's a complete example of revoking a user's access to a space:
 ```bash
 # Check spaces accessible to the user before revocation
 curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  http://localhost:3000/delegations/user/spaces
+  http://localhost:3000/spaces
 
 # Response:
 {
@@ -1107,7 +1080,7 @@ curl -X DELETE \
 ```bash
 # Check spaces accessible to the user after revocation
 curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
-  http://localhost:3000/delegations/user/spaces
+  http://localhost:3000/spaces
 
 # Response:
 {

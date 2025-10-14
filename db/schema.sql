@@ -111,20 +111,26 @@ CREATE INDEX IF NOT EXISTS idx_admin_spaces_createdAt ON admin_spaces(createdAt)
 
 -- =============================================================================
 -- Table: admin_agents
--- Stores serialized w3up-client agent data for each admin.
+-- Stores serialized storacha agent data for each admin device.
+-- Each device gets its own agent for security and isolation.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS admin_agents (
-    adminEmail TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    adminEmail TEXT NOT NULL,
+    did TEXT NOT NULL,
     agentData TEXT NOT NULL,
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL,
     status TEXT CHECK(status IN ('pending', 'active', 'failed')) NOT NULL DEFAULT 'pending',
-    planProduct TEXT
+    planProduct TEXT,
+    UNIQUE(adminEmail, did)
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_agents_email ON admin_agents(adminEmail);
+CREATE INDEX IF NOT EXISTS idx_admin_agents_did ON admin_agents(did);
 CREATE INDEX IF NOT EXISTS idx_admin_agents_status ON admin_agents (status);
 CREATE INDEX IF NOT EXISTS idx_admin_agents_planProduct ON admin_agents(planProduct);
+CREATE INDEX IF NOT EXISTS idx_admin_agents_email_did ON admin_agents(adminEmail, did);
 
 
 -- =============================================================================

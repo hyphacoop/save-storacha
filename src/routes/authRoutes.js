@@ -123,32 +123,6 @@ router.post('/login', async (req, res) => {
     }
 });
 
-/**
- * POST /auth/login/email - Email-based login initialization (deprecated)
- * 
- * This endpoint initiates the Storacha email validation process.
- * It's deprecated in favor of the unified /auth/login endpoint but
- * maintained for backward compatibility.
- * 
- * New integrations should use /auth/login instead.
- */
-router.post('/login/email', async (req, res) => {
-    try {
-        const { email, did } = req.body;
-        if (!email) {
-            return res.status(400).json({ error: 'Email is required' });
-        }
-        if (!did) {
-            return res.status(400).json({ error: 'DID is required for security' });
-        }
-
-        const result = await AuthService.requestAdminLoginViaW3Up(email, did);
-        res.json(result);
-    } catch (error) {
-        logger.error('Email login failed', { error: error.message });
-        res.status(500).json({ error: error.message });
-    }
-});
 
 /**
  * POST /auth/verify - DID signature verification endpoint
@@ -262,25 +236,6 @@ router.post('/logout', ensureAuthenticated, (req, res) => {
     res.json({ message: 'Logout successful' });
 });
 
-/**
- * POST /auth/w3up/logout - Storacha service logout
- * 
- * Attempts to logout from the Storacha service directly, removing
- * any cached account information. This is separate from local session
- * management and affects the underlying Storacha client state.
- * 
- * Use this for complete cleanup of Storacha authentication state.
- */
-router.post('/w3up/logout', async (req, res) => {
-    logger.info('Storacha logout request received');
-    try {
-        const result = await AuthService.logoutFromW3Up();
-        res.json(result);
-    } catch (error) {
-        logger.error('Storacha logout failed', { error: error.message });
-        res.status(500).json({ message: error.message || 'Logout failed' });
-    }
-});
 
 /**
  * GET /auth/sessions - List all sessions for authenticated user
