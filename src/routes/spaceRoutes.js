@@ -154,7 +154,7 @@ router.get('/', flexibleAuth, async (req, res) => {
             
             // Get admin spaces using dual technique (cache + service sync)
             logger.info('Getting admin spaces for authenticated admin', { adminEmail, userDid });
-            const adminSpaces = await SpaceService.getSpacesWithSync(adminEmail);
+            const adminSpaces = await SpaceService.getSpacesWithSync(adminEmail, userDid);
             spaces.push(...adminSpaces); // These already have isAdmin: true
 
             // Also get any delegated spaces for this admin's DID
@@ -296,12 +296,11 @@ router.get('/usage', flexibleAuth, async (req, res) => {
         if (userType === 'admin') {
             const adminEmail = req.userEmail;
             try {
-                client = await getAdminClient(adminEmail);
+                client = await getAdminClient(adminEmail, req.userDid);
                 logger.info('Using admin-specific client for space usage', { adminEmail });
             } catch (error) {
-                // Fallback to global client for backward compatibility
-                client = getClient();
-                logger.info('Using global client for space usage (fallback)', { adminEmail });
+                logger.error('Failed to get admin client for space usage', { adminEmail, error: error.message });
+                throw new Error(`Failed to get admin client for space usage: ${error.message}`);
             }
         } else {
             // For delegated users, create user-specific client with principal and delegation
@@ -469,7 +468,7 @@ router.get('/account-usage', ensureAuthenticated, async (req, res) => {
             });
         }
 
-        const client = await getAdminClient(adminEmail);
+        const client = await getAdminClient(adminEmail, req.userDid);
         logger.info('Using admin-specific client for account usage', { adminEmail });
         // Get all spaces for the admin
         const spaces = getAdminSpaces(adminEmail);

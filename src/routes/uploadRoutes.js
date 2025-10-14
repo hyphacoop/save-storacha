@@ -9,7 +9,7 @@ import { writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import rateLimit from 'express-rate-limit';
-import { getClient, getAdminClient } from '../lib/w3upClient.js';
+import { getAdminClient } from '../lib/adminClientManager.js';
 import { flexibleAuth } from './spaceRoutes.js';
 
 const router = express.Router();
@@ -88,8 +88,7 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
             return res.status(403).json({ 
                 error: 'No valid delegation found for this space',
                 userDid,
-                spaceDid,
-                availableSpaces: delegations.map(d => d.spaceDid)
+                spaceDid
             });
         }
 
@@ -113,16 +112,26 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
             if (delegation.createdBy) {
                 try {
                     // Use the admin who created the delegation
-                    uploadClient = await getAdminClient(delegation.createdBy);
+                    // For delegated users, we need to find an admin DID for the delegation creator
+                    // We'll use the first active agent for this admin as a fallback
+                    const { getDatabase } = await import('../lib/db.js');
+                    const db = getDatabase();
+                    const adminAgent = db.prepare('SELECT did FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
+                        .get(delegation.createdBy, 'active');
+                    
+                    if (adminAgent) {
+                        uploadClient = await getAdminClient(delegation.createdBy, adminAgent.did);
+                    } else {
+                        throw new Error('No active admin agent found for delegation creator');
+                    }
                     console.log('Using admin-specific client for upload');
                     console.log('Delegation created by admin:', delegation.createdBy);
                 } catch (error) {
-                    console.log('Failed to get admin client, falling back to global client:', error.message);
-                    uploadClient = getClient();
+                    console.log('Failed to get admin client:', error.message);
+                    throw new Error(`Failed to get admin client for delegation creator: ${error.message}`);
                 }
             } else {
-                uploadClient = getClient();
-                console.log('Using global client for upload (no admin tracking)');
+                throw new Error('Delegation missing admin information - cannot determine which admin client to use');
             }
             
             if (!uploadClient) {
@@ -247,11 +256,11 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             // Admin has access - use admin client directly
             let listClient;
             try {
-                listClient = await getAdminClient(adminEmail);
+                listClient = await getAdminClient(adminEmail, req.userDid);
                 console.log('Using admin client for upload listing with DID:', listClient.did());
             } catch (error) {
-                console.log('Failed to get admin client, falling back to global client:', error.message);
-                listClient = getClient();
+                console.log('Failed to get admin client:', error.message);
+                throw new Error(`Failed to get admin client for upload listing: ${error.message}`);
             }
             
             // Set the current space for the client
@@ -318,10 +327,7 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             if (spaceDelegations.length === 0) {
                 console.log('No valid delegations found for user and space:', { userDid, spaceDid });
                 return res.status(403).json({ 
-                    error: 'No valid delegation found for this space',
-                    userDid,
-                    spaceDid,
-                    availableSpaces: delegations.map(d => d.spaceDid)
+                    error: 'No valid delegation found for this space'
                 });
             }
 
@@ -338,16 +344,26 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             if (delegation.createdBy) {
                 try {
                     // Use the admin who created the delegation
-                    listClient = await getAdminClient(delegation.createdBy);
+                    // For delegated users, we need to find an admin DID for the delegation creator
+                    // We'll use the first active agent for this admin as a fallback
+                    const { getDatabase } = await import('../lib/db.js');
+                    const db = getDatabase();
+                    const adminAgent = db.prepare('SELECT did FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
+                        .get(delegation.createdBy, 'active');
+                    
+                    if (adminAgent) {
+                        listClient = await getAdminClient(delegation.createdBy, adminAgent.did);
+                    } else {
+                        throw new Error('No active admin agent found for delegation creator');
+                    }
                     console.log('Using admin-specific client for upload listing');
                     console.log('Delegation created by admin:', delegation.createdBy);
                 } catch (error) {
-                    console.log('Failed to get admin client, falling back to global client:', error.message);
-                    listClient = getClient();
+                    console.log('Failed to get admin client:', error.message);
+                    throw new Error(`Failed to get admin client for delegated user upload listing: ${error.message}`);
                 }
             } else {
-                listClient = getClient();
-                console.log('Using global client for upload listing (no admin tracking)');
+                throw new Error('Delegation missing admin information - cannot determine which admin client to use for upload listing');
             }
             
             if (!listClient) {

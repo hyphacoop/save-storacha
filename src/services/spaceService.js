@@ -1,13 +1,5 @@
-import { create as createClient } from '@storacha/client'; // Renamed to avoid conflict
-import { StoreMemory } from '@storacha/client/stores/memory'; // Import StoreMemory
-import { getAdminData, getCachedSpaces, getAdminSpaces, isAdminSpaceOwner, storeCachedSpaces } from '../lib/store.js';
-import { getDelegationsForUser } from '../lib/store.js';
-import { CarReader } from '@ipld/car/reader';
-import { importDAG } from '@ucanto/core/delegation';
-import { base64 } from "multiformats/bases/base64";
-import * as Signer from '@ucanto/principal/ed25519'; // For parsing the principal string
-import { DID } from '@ucanto/validator'; // For parsing the principal string to a Signer
-import { getClient, getAdminClient } from '../lib/w3upClient.js';
+import { storeCachedSpaces } from '../lib/store.js';
+import { getAdminClient } from '../lib/adminClientManager.js';
 import { getDatabase } from '../lib/db.js';
 
 /**
@@ -31,20 +23,16 @@ export async function getAdminEmailFromDid(did) {
     }
 }
 
-export async function getSpaces(adminEmail) {
+export async function getSpaces(adminEmail, did) {
     if (!adminEmail) {
         throw new Error('Admin email is required to fetch spaces.');
     }
-
-    const db = getDatabase();
-    const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
-
-    if (!adminAgent || !adminAgent.agentData) {
-        throw new Error('Cannot fetch spaces: Missing admin data record. Admin needs to complete the login process.');
+    if (!did) {
+        throw new Error('Device DID is required to fetch spaces.');
     }
 
     try {
-        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        const client = await getAdminClient(adminEmail, did);
         const spaces = await client.spaces();
         
         const spacesList = spaces.map(space => ({
@@ -61,21 +49,17 @@ export async function getSpaces(adminEmail) {
     }
 } 
 
-export async function getSpacesWithSync(adminEmail) {
+export async function getSpacesWithSync(adminEmail, did) {
     if (!adminEmail) {
         throw new Error('Admin email is required to fetch spaces.');
     }
-
-    const db = getDatabase();
-    const adminAgent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
-
-    if (!adminAgent || !adminAgent.agentData) {
-        throw new Error('Cannot fetch spaces: Missing admin data record. Admin needs to complete the login process.');
+    if (!did) {
+        throw new Error('Device DID is required to fetch spaces.');
     }
 
     try {
         // Always fetch current spaces from storacha service
-        const client = await getAdminClient(adminEmail, adminAgent.agentData);
+        const client = await getAdminClient(adminEmail, did);
         
         // Ensure we have the latest delegations before fetching spaces
         try {
@@ -94,6 +78,7 @@ export async function getSpacesWithSync(adminEmail) {
         }));
 
         // Sync all spaces to database
+        const db = getDatabase();
         for (const space of serviceSpacesList) {
             try {
                 db.prepare(`

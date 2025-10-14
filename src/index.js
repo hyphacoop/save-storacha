@@ -16,10 +16,8 @@
 
 import express from 'express';
 import cors from 'cors';
-import { initializeW3UpClient, clearClientState } from './lib/w3upClient.js';
 import { clearStores, loadDelegationsFromDatabase, loadPrincipalsFromDatabase, loadSessionsFromDatabase } from './lib/store.js';
 import { setupDatabase, closeDatabase } from './lib/db.js';
-import * as AuthService from './services/authService.js';
 import authRoutes from './routes/authRoutes.js';
 import spaceRoutes from './routes/spaceRoutes.js';
 import delegationRoutes from './routes/delegationRoutes.js';
@@ -81,7 +79,6 @@ async function main() {
         // Development mode cleanup - ensures clean state for development/testing
         const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'dev';
         if (isDev) {
-            clearClientState();
             clearStores();
         }
         
@@ -98,8 +95,7 @@ async function main() {
         await loadSessionsFromDatabase();
         logger.info('Sessions loaded from database');
         
-        // Initialize Storacha client with any existing proofs/credentials
-        await initializeW3UpClient(); 
+        // Initialize complete - using per-device agents instead of global client
         logger.info('Server initialization complete');
 
         // Mount route handlers - each handles a specific domain of functionality

@@ -2,12 +2,11 @@ import { create as createClient } from '@storacha/client';
 import { StoreMemory } from '@storacha/client/stores/memory';
 import * as Signer from '@ucanto/principal/ed25519';
 import { logger } from './logger.js';
-import { Agent } from '@storacha/access';
 
 const clientCache = new Map();
 
 /**
- * Creates a w3up client initialized with a specific private key (principal).
+ * Creates a storacha client initialized with a specific private key (principal).
  * This is for non-interactive use by the server on behalf of an admin.
  *
  * @param {string} principalKey - The private key string for the agent.
@@ -28,54 +27,42 @@ export async function getClientForPrincipal(principalKey) {
 }
 
 /**
- * Creates a new agent and client for a first-time admin onboarding.
- * This function will trigger the interactive email verification flow.
+ * Creates a new agent and client for a device.
+ * This function triggers email verification and blocks until completed.
+ * Each device gets its own agent for security.
  *
- * @param {string} email - The email of the admin to onboard.
- * @returns {Promise<{client: import('@web-storage/w3up-client').Client, principalKey: string}>}
+ * @param {string} email - The email of the admin.
+ * @param {string} did - The device DID.
+ * @returns {Promise<{client: import('@web-storage/w3up-client').Client, principalKey: string, planProduct: string|null}>}
  */
-export async function createAndAuthorizeNewClient(email) {
-    logger.info('Creating a new agent for first-time login', { email });
+export async function createAndAuthorizeDeviceAgent(email, did) {
+    logger.info('Creating new agent for device', { email, did });
     const principal = await Signer.generate();
     const store = new StoreMemory();
     const client = await createClient({ principal, store });
 
-    logger.info('Starting interactive login flow', { email });
+    logger.info('Starting email verification for device', { email, did });
     const account = await client.login(email);
-    logger.info('Interactive login successful', { email });
+    logger.info('Email sent, awaiting user verification', { email, did });
 
-    // Capture storage plan product information for admin account
+    // Wait for email verification and claim delegations
+    // This blocks until the user clicks the email verification link
+    await client.capability.access.claim();
+    logger.info('Email verified! Delegations claimed', { email, did });
+
+    // Capture plan information
     let planProduct = null;
     if (account && account.plan && typeof account.plan.get === 'function') {
         try {
-            logger.info('PLAN INFO - Getting plan for new admin onboarding', { email });
+            logger.info('PLAN INFO - Getting plan for admin', { email });
             const planInfo = await account.plan.get();
-
             if (planInfo && planInfo.ok && planInfo.ok.product) {
                 planProduct = planInfo.ok.product;
-                logger.info('PLAN INFO - Successfully captured plan product', {
-                    email,
-                    planProduct
-                });
-            } else {
-                logger.warn('PLAN INFO - Plan response missing product field', {
-                    email,
-                    planInfo: JSON.stringify(planInfo, null, 2)
-                });
+                logger.info('PLAN INFO - Captured plan product', { email, planProduct });
             }
         } catch (planError) {
-            logger.warn('PLAN INFO - Failed to retrieve plan information', {
-                email,
-                error: planError.message
-            });
+            logger.warn('PLAN INFO - Failed to retrieve plan', { email, error: planError.message });
         }
-    } else {
-        logger.warn('PLAN INFO - Account object or plan.get() method not available', {
-            email,
-            hasAccount: !!account,
-            hasPlan: !!(account && account.plan),
-            hasPlanGet: !!(account && account.plan && typeof account.plan.get === 'function')
-        });
     }
 
     const archive = principal.toArchive();
@@ -91,21 +78,36 @@ export async function createAndAuthorizeNewClient(email) {
     return { client, principalKey, planProduct };
 }
 
+
 /**
- * Gets a pre-authenticated client for an existing admin using their stored principal.
- * This is the primary function for all subsequent, non-interactive logins.
+ * Gets a pre-authenticated client for a specific device (email + DID combination).
+ * Fetches the device agent from database and creates a client.
  *
  * @param {string} email - The admin's email.
- * @param {string} principalKey - The admin's stored private key.
+ * @param {string} did - The device DID.
  * @returns {Promise<import('@web-storage/w3up-client').Client>}
  */
-export async function getAdminClient(email, principalKey) {
-    if (clientCache.has(email)) {
-        return clientCache.get(email);
+export async function getAdminClient(email, did) {
+    const cacheKey = `${email}:${did}`;
+    if (clientCache.has(cacheKey)) {
+        return clientCache.get(cacheKey);
     }
 
-    logger.info('Initializing client from stored principal', { email });
-    const client = await getClientForPrincipal(principalKey);
-    clientCache.set(email, client);
+    logger.info('Fetching device agent from database', { email, did });
+
+    // Import getDatabase here to avoid circular dependency
+    const { getDatabase } = await import('../lib/db.js');
+    const db = getDatabase();
+
+    const agent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
+        .get(email, did, 'active');
+
+    if (!agent || !agent.agentData) {
+        throw new Error(`No active agent found for device ${did} with email ${email}`);
+    }
+
+    logger.info('Initializing client from stored device agent', { email, did });
+    const client = await getClientForPrincipal(agent.agentData);
+    clientCache.set(cacheKey, client);
     return client;
 } 
