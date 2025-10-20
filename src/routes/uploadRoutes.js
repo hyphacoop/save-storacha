@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { CarReader } from '@ipld/car/reader';
-import { getDelegationsForUser, getAdminSpaces } from '../lib/store.js';
+import { getDelegationsForUser, getAdminSpaces, getUserPrincipal } from '../lib/store.js';
 import { importDAG } from '@ucanto/core/delegation';
 import { base64 } from "multiformats/bases/base64";
 import { filesFromPaths } from 'files-from-path';
@@ -11,6 +11,8 @@ import { join } from 'path';
 import rateLimit from 'express-rate-limit';
 import { getAdminClient } from '../lib/adminClientManager.js';
 import { flexibleAuth } from './spaceRoutes.js';
+import { StoreMemory } from '@storacha/client/stores/memory';
+import { create } from '@storacha/client';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -97,47 +99,21 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
         console.log('Delegation object:', delegation);
         console.log('Using delegation:', delegation.delegationCid && delegation.delegationCid.toString());
 
-        // Check if delegation has admin information for multi-admin support
-        if (!delegation.createdBy) {
-            console.log('Warning: Delegation missing admin information, using global client');
-        }
-
         // Initialize tempFilePath outside try block
         let tempFilePath = null;
         let importedDelegation = null;
 
         try {
-            // Use admin-specific client if available, otherwise fall back to global client
-            let uploadClient;
-            if (delegation.createdBy) {
-                try {
-                    // Use the admin who created the delegation
-                    // For delegated users, we need to find an admin DID for the delegation creator
-                    // We'll use the first active agent for this admin as a fallback
-                    const { getDatabase } = await import('../lib/db.js');
-                    const db = getDatabase();
-                    const adminAgent = db.prepare('SELECT did FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
-                        .get(delegation.createdBy, 'active');
-                    
-                    if (adminAgent) {
-                        uploadClient = await getAdminClient(delegation.createdBy, adminAgent.did);
-                    } else {
-                        throw new Error('No active admin agent found for delegation creator');
-                    }
-                    console.log('Using admin-specific client for upload');
-                    console.log('Delegation created by admin:', delegation.createdBy);
-                } catch (error) {
-                    console.log('Failed to get admin client:', error.message);
-                    throw new Error(`Failed to get admin client for delegation creator: ${error.message}`);
-                }
-            } else {
-                throw new Error('Delegation missing admin information - cannot determine which admin client to use');
+            // Use user-specific client for delegated users
+            const userPrincipal = await getUserPrincipal(userDid);
+            if (!userPrincipal) {
+                throw new Error('User principal not found');
             }
-            
-            if (!uploadClient) {
-                throw new Error('w3up client not initialized');
-            }
-            console.log('Using admin client for upload with DID:', uploadClient.did());
+
+            // Create Storacha client with user principal
+            const store = new StoreMemory();
+            const uploadClient = await create({ principal: userPrincipal, store });
+            console.log('Using user principal client for upload with DID:', uploadClient.did());
 
             // Import and add the delegation proof
             try {
@@ -339,37 +315,16 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
         let importedDelegation = null;
 
         try {
-            // Use admin-specific client if available, otherwise fall back to global client
-            let listClient;
-            if (delegation.createdBy) {
-                try {
-                    // Use the admin who created the delegation
-                    // For delegated users, we need to find an admin DID for the delegation creator
-                    // We'll use the first active agent for this admin as a fallback
-                    const { getDatabase } = await import('../lib/db.js');
-                    const db = getDatabase();
-                    const adminAgent = db.prepare('SELECT did FROM admin_agents WHERE adminEmail = ? AND status = ? LIMIT 1')
-                        .get(delegation.createdBy, 'active');
-                    
-                    if (adminAgent) {
-                        listClient = await getAdminClient(delegation.createdBy, adminAgent.did);
-                    } else {
-                        throw new Error('No active admin agent found for delegation creator');
-                    }
-                    console.log('Using admin-specific client for upload listing');
-                    console.log('Delegation created by admin:', delegation.createdBy);
-                } catch (error) {
-                    console.log('Failed to get admin client:', error.message);
-                    throw new Error(`Failed to get admin client for delegated user upload listing: ${error.message}`);
-                }
-            } else {
-                throw new Error('Delegation missing admin information - cannot determine which admin client to use for upload listing');
+            // Use user-specific client for delegated users
+            const userPrincipal = await getUserPrincipal(userDid);
+            if (!userPrincipal) {
+                throw new Error('User principal not found');
             }
-            
-            if (!listClient) {
-                throw new Error('w3up client not initialized');
-            }
-            console.log('Using client for upload listing with DID:', listClient.did());
+
+            // Create Storacha client with user principal
+            const store = new StoreMemory();
+            const listClient = await create({ principal: userPrincipal, store });
+            console.log('Using user principal client for upload listing with DID:', listClient.did());
 
             // Import and add the delegation proof
             try {
