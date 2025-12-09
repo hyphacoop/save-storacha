@@ -174,6 +174,30 @@ CREATE VIEW IF NOT EXISTS active_admin_spaces AS
 SELECT * FROM admin_spaces
 ORDER BY createdAt DESC;
 
+-- =============================================================================
+-- Table: uploads_metadata
+-- Stores metadata about files uploaded through our service.
+-- Allows us to track original filenames and associate them with IPFS CIDs.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS uploads_metadata (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cid TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    uploadedBy TEXT NOT NULL,
+    spaceDid TEXT NOT NULL,
+    uploadedAt INTEGER NOT NULL,
+    size INTEGER,
+    contentType TEXT,
+    UNIQUE(cid, spaceDid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_cid ON uploads_metadata(cid);
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_spaceDid ON uploads_metadata(spaceDid);
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_filename ON uploads_metadata(filename);
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_uploadedBy ON uploads_metadata(uploadedBy);
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_uploadedAt ON uploads_metadata(uploadedAt);
+CREATE INDEX IF NOT EXISTS idx_uploads_metadata_spaceDid_uploadedAt ON uploads_metadata(spaceDid, uploadedAt);
+
 -- Note: The `sessions` table from migration 003 was superseded by
 -- `account_sessions` in migration 005 and later adjusted in 009,
 -- so it is not included in the final schema. 
