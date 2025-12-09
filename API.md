@@ -560,7 +560,14 @@ This endpoint:
 - Supports all required capabilities for uploads
 
 ### GET /uploads
-List uploads for a user in a specific space.
+List uploads for a user in a specific space with cursor-based pagination, sorting, search, and filename tracking.
+
+**✨ Recent Enhancements (2025-11-26):**
+- **Filename Tracking**: All uploads now include original filenames (fetched from IPFS for bridge uploads)
+- **Content-Type Detection**: MIME types automatically detected and included
+- **Sorting**: Sort by upload date, size, or filename
+- **Search**: Filter uploads by filename
+- **Enhanced Timestamps**: Includes `insertedAt` and `updatedAt` fields
 
 **Authentication:** Flexible - supports two authentication methods:
 - **Admin users:** `x-session-id` header (session ID) - Direct access to admin spaces
@@ -569,7 +576,14 @@ List uploads for a user in a specific space.
 **Query Parameters:**
 - `spaceDid` (required): The DID of the space to list uploads for
 - `cursor` (optional): Pagination cursor for next page
-- `size` (optional): Number of results per page (default: 25)
+- `size` (optional): Number of results per page (default: 25, max: 100)
+- `sortBy` (optional): Field to sort by - `insertedAt` (default), `updatedAt`, or `size`
+- `sortOrder` (optional): Sort order - `desc` (default, newest/largest first) or `asc` (oldest/smallest first)
+- `search` (optional): Search uploads by filename (case-insensitive, partial match)
+
+**Ordering:** Uploads are returned in **reverse chronological order** (newest first) by default. New uploads will appear at the top of the list when fetching the first page without a cursor.
+
+**Search Note:** When using the `search` parameter, pagination is disabled and all matching results from the first page are returned.
 
 **Admin Request (Direct Access):**
 ```bash
@@ -592,6 +606,9 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
   "uploads": [
     {
       "cid": "bafkreiexampleCIDforFile1234567890documentation",
+      "filename": "my-document.pdf",
+      "contentType": "application/pdf",
+      "size": 1048576,
       "created": "2025-06-26T15:27:28.023Z",
       "insertedAt": "2025-06-26T15:27:28.023Z",
       "updatedAt": "2025-06-26T15:27:28.023Z",
@@ -599,6 +616,9 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
     },
     {
       "cid": "bafkreiexampleCIDforFile0987654321documentation",
+      "filename": "photo.jpg",
+      "contentType": "image/jpeg",
+      "size": 524288,
       "created": "2025-06-26T15:26:55.022Z",
       "insertedAt": "2025-06-26T15:26:55.022Z",
       "updatedAt": "2025-06-26T15:26:55.022Z",
@@ -607,7 +627,124 @@ curl -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" 
   ],
   "count": 2,
   "cursor": "bafkreiexampleCIDforFile1234567890documentation",
-  "hasMore": true
+  "hasMore": true,
+  "sortBy": "insertedAt",
+  "sortOrder": "desc"
+}
+```
+
+**Response Fields:**
+- `uploads`: Array of upload objects with the following fields:
+  - `cid`: Content identifier (IPFS CID)
+  - `filename`: ✨ Original filename - **automatically fetched from IPFS** for bridge uploads, always available for direct uploads
+  - `contentType`: ✨ MIME type of the file (e.g., "application/pdf", "image/jpeg") - inferred from filename extension
+  - `size`: File size in bytes
+  - `created`: Upload timestamp (convenience field, same as `insertedAt`)
+  - `insertedAt`: ✨ When upload was registered in Storacha (ISO 8601 timestamp)
+  - `updatedAt`: ✨ Last modification timestamp (ISO 8601 timestamp)
+  - `gatewayUrl`: IPFS gateway URL for accessing the file
+- `count`: ✨ Number of uploads in this page
+- `cursor`: Opaque cursor string to fetch the next page (null when searching)
+- `hasMore`: Boolean indicating if more pages are available (false when searching)
+- `sortBy`: ✨ Field used for sorting (`insertedAt`, `updatedAt`, or `size`)
+- `sortOrder`: ✨ Sort order applied (`desc` for newest/largest first, `asc` for oldest/smallest first)
+- `searchQuery`: ✨ (only present when searching) The search term used
+
+**Note on Filename Availability:**
+- **Direct uploads** (POST /upload): Filenames always tracked
+- **Bridge uploads**: Filenames fetched from IPFS automatically on first request, then cached for performance
+- **First request for uncached file**: May take ~500ms to fetch from IPFS
+- **Subsequent requests**: Served instantly from cache (<10ms)
+- **Old uploads**: Being backfilled, may temporarily show `null` until processed
+
+**Pagination Example:**
+
+```bash
+# Step 1: Get first page (most recent uploads)
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&size=10"
+
+# Response includes cursor for next page
+# {
+#   "uploads": [...10 most recent uploads...],
+#   "cursor": "bafkreicursor1",
+#   "hasMore": true
+# }
+
+# Step 2: Get next page (older uploads) using the cursor
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&size=10&cursor=bafkreicursor1"
+
+# Response includes cursor for next page
+# {
+#   "uploads": [...next 10 older uploads...],
+#   "cursor": "bafkreicursor2",
+#   "hasMore": true
+# }
+
+# Step 3: Continue until hasMore is false
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&size=10&cursor=bafkreicursor2"
+
+# Last page
+# {
+#   "uploads": [...remaining uploads...],
+#   "cursor": null,
+#   "hasMore": false
+# }
+```
+
+**Pagination Behavior Notes:**
+- **Newest First:** The first page always shows the most recently uploaded files
+- **Stable Cursors:** Cursors remain valid even if new uploads are added
+- **New Uploads:** Files uploaded during pagination will appear on the first page (without cursor) but won't affect already-issued cursors
+- **Cursor Expiration:** Cursors may eventually expire; clients should handle gracefully and restart from the beginning if needed
+- **No Total Count:** The API uses cursor-based pagination and doesn't return a total count of all uploads
+
+**Sorting and Search Examples:**
+
+```bash
+# Sort by size (largest first)
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&sortBy=size&sortOrder=desc"
+
+# Sort by upload time (oldest first)
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&sortBy=insertedAt&sortOrder=asc"
+
+# Search for files containing "report" in filename
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&search=report"
+
+# Search with sorting (search "photo", sort by size)
+curl -H "x-session-id: your-session-id" \
+  "http://localhost:3000/uploads?spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba&search=photo&sortBy=size&sortOrder=desc"
+```
+
+**Search Response Example:**
+```json
+{
+  "success": true,
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba",
+  "uploads": [
+    {
+      "cid": "bafkreiexampleCID123",
+      "filename": "quarterly-report-2025.pdf",
+      "contentType": "application/pdf",
+      "size": 2097152,
+      "created": "2025-06-26T15:27:28.023Z",
+      "insertedAt": "2025-06-26T15:27:28.023Z",
+      "updatedAt": "2025-06-26T15:27:28.023Z",
+      "gatewayUrl": "https://bafkreiexampleCID123.ipfs.w3s.link/"
+    }
+  ],
+  "count": 1,
+  "cursor": null,
+  "hasMore": false,
+  "sortBy": "insertedAt",
+  "sortOrder": "desc",
+  "searchQuery": "report"
 }
 ```
 

@@ -13,6 +13,8 @@ import { getAdminClient } from '../lib/adminClientManager.js';
 import { flexibleAuth } from './spaceRoutes.js';
 import { StoreMemory } from '@storacha/client/stores/memory';
 import { create } from '@storacha/client';
+import { getDatabase } from '../lib/db.js';
+import { getFilenameFromIPFS } from '../lib/ipfs.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -171,10 +173,36 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
             const cidString = cid.toString();
             console.log('Upload successful, CID:', cidString);
 
+            // Store filename metadata in database
+            try {
+                const db = getDatabase();
+                db.prepare(`
+                    INSERT OR REPLACE INTO uploads_metadata 
+                    (cid, filename, uploadedBy, spaceDid, uploadedAt, size, contentType)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                    cidString,
+                    req.file.originalname,
+                    userDid,
+                    spaceDid,
+                    Date.now(),
+                    result.size || file.size,
+                    req.file.mimetype || null
+                );
+                console.log('Stored upload metadata:', {
+                    cid: cidString,
+                    filename: req.file.originalname
+                });
+            } catch (metadataError) {
+                // Log error but don't fail the upload
+                console.error('Failed to store upload metadata:', metadataError);
+            }
+
             // Return the upload result with proper CID
             res.json({
                 success: true,
                 cid: cidString,
+                filename: req.file.originalname,
                 size: result.size || file.size,
                 carCid: result.carCid ? result.carCid.toString() : undefined
             });
@@ -248,6 +276,9 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             const uploads = [];
             let cursor = req.query.cursor; // Support pagination
             const size = parseInt(req.query.size) || 25; // Default page size
+            const sortBy = req.query.sortBy || 'insertedAt'; // Default sort field
+            const sortOrder = req.query.sortOrder || 'desc'; // Default newest first
+            const searchQuery = req.query.search ? req.query.search.toLowerCase().trim() : null; // Search by filename
             
             try {
                 // Use the capability.upload.list method on the client
@@ -258,30 +289,123 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                 });
                 console.log('List result:', result);
                 
-                if (result && result.results) {
-                    for (const upload of result.results) {
-                        uploads.push({
-                            cid: upload.root?.toString() || upload.cid?.toString(),
-                            size: upload.size,
-                            created: upload.insertedAt || upload.updatedAt,
-                            insertedAt: upload.insertedAt,
-                            updatedAt: upload.updatedAt,
-                            gatewayUrl: upload.root
-                                ? `https://${upload.root.toString()}.ipfs.w3s.link/`
-                                : `https://${upload.cid?.toString()}.ipfs.w3s.link/`,
-                        });
+                let results = result && result.results ? result.results : [];
+                
+                // Apply client-side sorting if requested
+                if (sortBy && results.length > 0) {
+                    results = [...results].sort((a, b) => {
+                        let aVal, bVal;
+                        
+                        if (sortBy === 'size') {
+                            aVal = a.size || 0;
+                            bVal = b.size || 0;
+                        } else if (sortBy === 'insertedAt' || sortBy === 'updatedAt') {
+                            aVal = new Date(a[sortBy] || a.insertedAt).getTime();
+                            bVal = new Date(b[sortBy] || b.insertedAt).getTime();
+                        } else {
+                            // Default to insertedAt
+                            aVal = new Date(a.insertedAt).getTime();
+                            bVal = new Date(b.insertedAt).getTime();
+                        }
+                        
+                        return sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+                    });
+                }
+                
+                // Build response array and enrich with filename metadata
+                const db = getDatabase();
+                for (const upload of results) {
+                    const cid = upload.root?.toString() || upload.cid?.toString();
+                    
+                    // Look up filename from local database
+                    let metadata = null;
+                    try {
+                        metadata = db.prepare(`
+                            SELECT filename, contentType, uploadedBy
+                            FROM uploads_metadata 
+                            WHERE cid = ? AND spaceDid = ?
+                        `).get(cid, spaceDid);
+                    } catch (metadataError) {
+                        console.error('Error fetching metadata for CID:', cid, metadataError);
+                    }
+                    
+                    // If no metadata in DB, try fetching from IPFS
+                    if (!metadata || !metadata.filename) {
+                        console.log(`[Uploads] No filename in DB for ${cid}, fetching from IPFS...`);
+                        try {
+                            const ipfsData = await getFilenameFromIPFS(cid, { timeout: 5000 });
+                            if (ipfsData.filename) {
+                                console.log(`[Uploads] ✅ Got filename from IPFS: ${ipfsData.filename}`);
+                                
+                                // Cache it in the database for next time
+                                try {
+                                    db.prepare(`
+                                        INSERT OR REPLACE INTO uploads_metadata 
+                                        (cid, filename, contentType, uploadedBy, spaceDid, uploadedAt, size)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    `).run(
+                                        cid,
+                                        ipfsData.filename,
+                                        ipfsData.contentType || null,
+                                        userDid,
+                                        spaceDid,
+                                        new Date(upload.insertedAt).getTime(),
+                                        upload.size || 0
+                                    );
+                                    console.log(`[Uploads] Cached IPFS filename in DB: ${ipfsData.filename}`);
+                                } catch (cacheError) {
+                                    console.error('[Uploads] Failed to cache filename:', cacheError);
+                                }
+                                
+                                // Update metadata for this upload
+                                metadata = {
+                                    filename: ipfsData.filename,
+                                    contentType: ipfsData.contentType,
+                                    uploadedBy: userDid
+                                };
+                            }
+                        } catch (ipfsError) {
+                            console.error(`[Uploads] Failed to fetch from IPFS for ${cid}:`, ipfsError.message);
+                            // Continue without filename - graceful degradation
+                        }
+                    }
+                    
+                    const uploadItem = {
+                        cid,
+                        filename: metadata?.filename || null,
+                        contentType: metadata?.contentType || null,
+                        size: upload.size,
+                        created: upload.insertedAt || upload.updatedAt,
+                        insertedAt: upload.insertedAt,
+                        updatedAt: upload.updatedAt,
+                        gatewayUrl: upload.root
+                            ? `https://${upload.root.toString()}.ipfs.w3s.link/`
+                            : `https://${cid}.ipfs.w3s.link/`,
+                    };
+                    
+                    // Apply search filter if provided
+                    if (searchQuery) {
+                        if (uploadItem.filename && uploadItem.filename.toLowerCase().includes(searchQuery)) {
+                            uploads.push(uploadItem);
+                        }
+                        // Skip items without filenames when searching
+                    } else {
+                        uploads.push(uploadItem);
                     }
                 }
                 
-                // Return pagination info
+                // Return pagination info with clearer field names
                 res.json({
                     success: true,
                     userDid,
                     spaceDid,
                     uploads,
                     count: uploads.length,
-                    cursor: result?.before, // For next page
-                    hasMore: !!result?.before
+                    cursor: searchQuery ? null : result?.before, // Disable cursor when searching
+                    hasMore: searchQuery ? false : !!result?.before,
+                    sortBy,
+                    sortOrder,
+                    ...(searchQuery && { searchQuery })
                 });
                 
             } catch (error) {
@@ -369,6 +493,9 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             const uploads = [];
             let cursor = req.query.cursor; // Support pagination
             const size = parseInt(req.query.size) || 25; // Default page size
+            const sortBy = req.query.sortBy || 'insertedAt'; // Default sort field
+            const sortOrder = req.query.sortOrder || 'desc'; // Default newest first
+            const searchQuery = req.query.search ? req.query.search.toLowerCase().trim() : null; // Search by filename
             
             try {
                 // Use the capability.upload.list method on the w3up client
@@ -379,30 +506,123 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                 });
                 console.log('List result:', result);
                 
-                if (result && result.results) {
-                    for (const upload of result.results) {
-                        uploads.push({
-                            cid: upload.root?.toString() || upload.cid?.toString(),
-                            size: upload.size,
-                            created: upload.insertedAt || upload.updatedAt,
-                            insertedAt: upload.insertedAt,
-                            updatedAt: upload.updatedAt,
-                            gatewayUrl: upload.root
-                                ? `https://${upload.root.toString()}.ipfs.w3s.link/`
-                                : `https://${upload.cid?.toString()}.ipfs.w3s.link/`,
-                        });
+                let results = result && result.results ? result.results : [];
+                
+                // Apply client-side sorting if requested
+                if (sortBy && results.length > 0) {
+                    results = [...results].sort((a, b) => {
+                        let aVal, bVal;
+                        
+                        if (sortBy === 'size') {
+                            aVal = a.size || 0;
+                            bVal = b.size || 0;
+                        } else if (sortBy === 'insertedAt' || sortBy === 'updatedAt') {
+                            aVal = new Date(a[sortBy] || a.insertedAt).getTime();
+                            bVal = new Date(b[sortBy] || b.insertedAt).getTime();
+                        } else {
+                            // Default to insertedAt
+                            aVal = new Date(a.insertedAt).getTime();
+                            bVal = new Date(b.insertedAt).getTime();
+                        }
+                        
+                        return sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
+                    });
+                }
+                
+                // Build response array and enrich with filename metadata
+                const db = getDatabase();
+                for (const upload of results) {
+                    const cid = upload.root?.toString() || upload.cid?.toString();
+                    
+                    // Look up filename from local database
+                    let metadata = null;
+                    try {
+                        metadata = db.prepare(`
+                            SELECT filename, contentType, uploadedBy
+                            FROM uploads_metadata 
+                            WHERE cid = ? AND spaceDid = ?
+                        `).get(cid, spaceDid);
+                    } catch (metadataError) {
+                        console.error('Error fetching metadata for CID:', cid, metadataError);
+                    }
+                    
+                    // If no metadata in DB, try fetching from IPFS
+                    if (!metadata || !metadata.filename) {
+                        console.log(`[Uploads] No filename in DB for ${cid}, fetching from IPFS...`);
+                        try {
+                            const ipfsData = await getFilenameFromIPFS(cid, { timeout: 5000 });
+                            if (ipfsData.filename) {
+                                console.log(`[Uploads] ✅ Got filename from IPFS: ${ipfsData.filename}`);
+                                
+                                // Cache it in the database for next time
+                                try {
+                                    db.prepare(`
+                                        INSERT OR REPLACE INTO uploads_metadata 
+                                        (cid, filename, contentType, uploadedBy, spaceDid, uploadedAt, size)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                                    `).run(
+                                        cid,
+                                        ipfsData.filename,
+                                        ipfsData.contentType || null,
+                                        userDid,
+                                        spaceDid,
+                                        new Date(upload.insertedAt).getTime(),
+                                        upload.size || 0
+                                    );
+                                    console.log(`[Uploads] Cached IPFS filename in DB: ${ipfsData.filename}`);
+                                } catch (cacheError) {
+                                    console.error('[Uploads] Failed to cache filename:', cacheError);
+                                }
+                                
+                                // Update metadata for this upload
+                                metadata = {
+                                    filename: ipfsData.filename,
+                                    contentType: ipfsData.contentType,
+                                    uploadedBy: userDid
+                                };
+                            }
+                        } catch (ipfsError) {
+                            console.error(`[Uploads] Failed to fetch from IPFS for ${cid}:`, ipfsError.message);
+                            // Continue without filename - graceful degradation
+                        }
+                    }
+                    
+                    const uploadItem = {
+                        cid,
+                        filename: metadata?.filename || null,
+                        contentType: metadata?.contentType || null,
+                        size: upload.size,
+                        created: upload.insertedAt || upload.updatedAt,
+                        insertedAt: upload.insertedAt,
+                        updatedAt: upload.updatedAt,
+                        gatewayUrl: upload.root
+                            ? `https://${upload.root.toString()}.ipfs.w3s.link/`
+                            : `https://${cid}.ipfs.w3s.link/`,
+                    };
+                    
+                    // Apply search filter if provided
+                    if (searchQuery) {
+                        if (uploadItem.filename && uploadItem.filename.toLowerCase().includes(searchQuery)) {
+                            uploads.push(uploadItem);
+                        }
+                        // Skip items without filenames when searching
+                    } else {
+                        uploads.push(uploadItem);
                     }
                 }
                 
-                // Return pagination info
+                // Return pagination info with clearer field names
                 res.json({
                     success: true,
                     userDid,
                     spaceDid,
                     uploads,
                     count: uploads.length,
-                    cursor: result?.before, // For next page
-                    hasMore: !!result?.before
+                    cursor: searchQuery ? null : result?.before, // Disable cursor when searching
+                    hasMore: searchQuery ? false : !!result?.before,
+                    sortBy,
+                    sortOrder,
+                    ...(searchQuery && { searchQuery })
                 });
                 
             } catch (error) {
