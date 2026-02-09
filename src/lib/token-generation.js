@@ -127,7 +127,8 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
             isDelegated
         });
 
-        // If this is a delegated user request, add the user's delegation proof
+        // If this is a delegated user request, add the user's delegation proof first
+        // Delegated users get space access through their delegation, not through admin's spaces
         if (isDelegated) {
             const userDid = adminEmailOrUserDid;
             const { getDelegationsForUser } = await import('./store.js');
@@ -162,6 +163,39 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
                 } catch (error) {
                     logger.warn(`[bridge] Could not add user delegation proof, continuing with admin capabilities`, { error: error.message });
                 }
+            }
+        } else {
+            // ADMIN MODE: Ensure the space is set on the client before issuing coupon
+            // This is required for the client to have the store/add capability available
+            // Load the space first (matching pattern from spaceRoutes.js), then set it as current
+            try {
+                // Check if space is already loaded
+                const spaces = client.spaces();
+                let space = spaces.find(s => s.did() === resource);
+                
+                // If not loaded, add it first (this loads the space into the client)
+                if (!space) {
+                    try {
+                        space = await client.addSpace(resource);
+                        logger.info(`[bridge] Added space to client for coupon issuance`, { resource });
+                    } catch (addSpaceError) {
+                        logger.error(`[bridge] Could not add space for coupon issuance`, { 
+                            resource, 
+                            error: addSpaceError.message 
+                        });
+                        throw new Error(`Space ${resource} not found and could not be loaded: ${addSpaceError.message}`);
+                    }
+                }
+                
+                // Now set it as the current space (this will succeed since space is loaded)
+                await client.setCurrentSpace(resource);
+                logger.info(`[bridge] Set current space for coupon issuance`, { resource });
+            } catch (spaceError) {
+                logger.error(`[bridge] Failed to set space for coupon issuance`, { 
+                    resource, 
+                    error: spaceError.message 
+                });
+                throw new Error(`Failed to set space for coupon issuance: ${spaceError.message}`);
             }
         }
 
