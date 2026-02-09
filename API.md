@@ -526,7 +526,7 @@ curl -X POST \
 
 **Recommendation**: Use the proven working E2E test scripts instead of manual testing to avoid common pitfalls like token expiration and payload construction errors.
 
-### 2. Upload through Token Service (✅ Working - Recommended for now)
+### 2. Upload through Token Service (*recommended for now*)
 
 **Authentication:** Flexible - supports two authentication methods:
 - **Admin users:** `x-session-id` header (session ID) - Direct access to admin spaces
