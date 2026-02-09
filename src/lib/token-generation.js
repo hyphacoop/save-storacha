@@ -127,6 +127,34 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
             isDelegated
         });
 
+        // Ensure the space is set on the client before issuing coupon
+        // This is required for the client to have the store/add capability available
+        // Set the current space first (matching pattern from delegationRoutes.js)
+        try {
+            await client.setCurrentSpace(resource);
+            logger.info(`[bridge] Set current space for coupon issuance`, { resource });
+            
+            // Verify space is loaded, add if needed
+            const spaces = client.spaces();
+            const space = spaces.find(s => s.did() === resource);
+            if (!space) {
+                try {
+                    await client.addSpace(resource);
+                    logger.info(`[bridge] Added space to client for coupon issuance`, { resource });
+                } catch (addSpaceError) {
+                    logger.warn(`[bridge] Could not add space, but space is set`, { 
+                        resource, 
+                        error: addSpaceError.message 
+                    });
+                }
+            }
+        } catch (spaceError) {
+            logger.warn(`[bridge] Could not set space for coupon issuance, continuing anyway`, { 
+                resource, 
+                error: spaceError.message 
+            });
+        }
+
         // If this is a delegated user request, add the user's delegation proof
         if (isDelegated) {
             const userDid = adminEmailOrUserDid;
