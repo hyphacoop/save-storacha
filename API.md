@@ -21,7 +21,7 @@ All endpoints are relative to `http://localhost:3000` (or your configured server
 | GET  | /spaces | List all spaces available to a user, including both admin spaces and delegated spaces |
 | GET  | /spaces/usage | Usage for a space |
 | GET  | /spaces/account-usage | Total account usage |
-| POST | /upload | Upload through token service |
+| POST | /upload | Upload through token service (supports both admin and delegated user access) |
 | POST | /bridge-tokens | Generate bridge tokens for Storacha HTTP API bridge |
 | GET  | /uploads | List uploads for user+space (supports both admin and delegated user access) |
 | GET  | /delegations/list | List delegations |
@@ -528,13 +528,24 @@ curl -X POST \
 
 ### 2. Upload through Token Service (✅ Working - Recommended for now)
 
-**Authentication:** `x-user-did` header (user DID)
+**Authentication:** Flexible - supports two authentication methods:
+- **Admin users:** `x-session-id` header (session ID) - Direct access to admin spaces
+- **Delegated users:** `x-user-did` header (user DID) - Delegation-based access
 
 **Form Parameters:**
 - `file` (required): The file to upload
 - `spaceDid` (required): The DID of the space to upload to
 
-**Request:**
+**Admin Request:**
+```bash
+curl -X POST \
+  -H "x-session-id: your-session-id" \
+  -F "file=@HELLO_WORLD.txt" \
+  -F "spaceDid=did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba" \
+  http://localhost:3000/upload
+```
+
+**Delegated User Request:**
 ```bash
 curl -X POST \
   -H "x-user-did: did:key:z6MkexampleUserDIDforDocumentation123456789abcdef" \
@@ -552,8 +563,29 @@ curl -X POST \
 }
 ```
 
+**Error Responses:**
+
+**403 Forbidden - Admin without space access:**
+```json
+{
+  "error": "Admin does not have access to this space",
+  "adminEmail": "admin@example.com",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+}
+```
+
+**403 Forbidden - Delegated user without delegation:**
+```json
+{
+  "error": "No valid delegation found for this space",
+  "userDid": "did:key:z6MkexampleUserDIDforDocumentation123456789abcdef",
+  "spaceDid": "did:key:z6MkexampleSpaceDIDforDocumentation987654321fedcba"
+}
+```
+
 This endpoint:
-- Validates user delegation
+- Supports both admin and delegated user authentication
+- Validates user access (admin space ownership or delegation)
 - Handles file uploads securely
 - Manages temporary files
 - Provides proper error handling

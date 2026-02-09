@@ -54,13 +54,14 @@ function isCarFile(buffer, filename = '') {
 }
 
 // POST /upload - Upload files to a space
-router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) => {
+router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async (req, res) => {
     try {
-        const userDid = req.headers['x-user-did'];
+        const userDid = req.userDid;
+        const userType = req.userType;
         const spaceDid = req.body.spaceDid;
 
-        if (!userDid || !spaceDid) {
-            return res.status(400).json({ error: 'Missing userDid or spaceDid' });
+        if (!spaceDid) {
+            return res.status(400).json({ error: 'Missing spaceDid' });
         }
 
         if (!req.file) {
@@ -69,109 +70,115 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
 
         console.log('Upload request received:', {
             userDid,
+            userType,
             spaceDid,
             filename: req.file.originalname,
             size: req.file.size
         });
 
-        // Get delegations for the user
-        const delegations = await getDelegationsForUser(userDid);
-        console.log('Found delegations:', delegations ? delegations.length : 0);
-        if (!delegations || delegations.length === 0) {
-            console.log('No valid delegations found for user:', userDid);
-            return res.status(403).json({ error: 'No valid delegation found', userDid });
-        }
-
-        // Filter delegations for the specific space
-        const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
-        console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
-        if (spaceDelegations.length === 0) {
-            console.log('No valid delegations found for user and space:', { userDid, spaceDid });
-            return res.status(403).json({ 
-                error: 'No valid delegation found for this space',
-                userDid,
-                spaceDid
-            });
-        }
-
-        // Use the first valid delegation
-        const delegation = spaceDelegations[0];
-        console.log('Delegation object:', delegation);
-        console.log('Using delegation:', delegation.delegationCid && delegation.delegationCid.toString());
-
-        // Initialize tempFilePath outside try block
+        let uploadClient;
         let tempFilePath = null;
-        let importedDelegation = null;
 
         try {
-            // Use user-specific client for delegated users
-            const userPrincipal = await getUserPrincipal(userDid);
-            if (!userPrincipal) {
-                throw new Error('User principal not found');
-            }
+            if (userType === 'admin') {
+                // Admin path: validate space access and get admin client
+                const adminEmail = req.userEmail;
+                const adminSpaces = getAdminSpaces(adminEmail);
+                const hasAdminAccess = adminSpaces.some(space => space.did === spaceDid);
 
-            // Create Storacha client with user principal
-            const store = new StoreMemory();
-            const uploadClient = await create({ principal: userPrincipal, store });
-            console.log('Using user principal client for upload with DID:', uploadClient.did());
-
-            // Import and add the delegation proof
-            try {
-                console.log('Delegation CAR:', delegation.delegationCar.substring(0, 100) + '...');
-                const delegationBytes = base64.decode(delegation.delegationCar);
-                console.log('Decoded delegation bytes length:', delegationBytes.length);
-                const carReader = await CarReader.fromBytes(delegationBytes);
-                console.log('Created CAR reader');
-
-                // Get all blocks from the CAR file
-                const blocks = [];
-                const iterator = carReader.blocks();
-                for await (const block of iterator) {
-                    blocks.push(block);
+                if (!hasAdminAccess) {
+                    console.log('Admin does not have access to space:', { adminEmail, spaceDid });
+                    return res.status(403).json({
+                        error: 'Admin does not have access to this space',
+                        adminEmail,
+                        spaceDid
+                    });
                 }
-                console.log('Collected blocks from CAR:', blocks.length);
 
-                // Import the delegation using the blocks
-                importedDelegation = await importDAG(blocks);
-                if (!importedDelegation) {
-                    throw new Error('Failed to import delegation: importDAG returned null');
+                uploadClient = await getAdminClient(adminEmail, req.userDid);
+                console.log('Using admin client for upload with DID:', uploadClient.did());
+                await uploadClient.setCurrentSpace(spaceDid);
+                console.log('Set current space to requested space:', spaceDid);
+            } else {
+                // Delegated user path: validate delegation and create user client
+                const delegations = await getDelegationsForUser(userDid);
+                console.log('Found delegations:', delegations ? delegations.length : 0);
+                if (!delegations || delegations.length === 0) {
+                    console.log('No valid delegations found for user:', userDid);
+                    return res.status(403).json({ error: 'No valid delegation found', userDid });
                 }
-                await uploadClient.addProof(importedDelegation);
-                console.log('Added delegation proof to upload client');
-            } catch (error) {
-                console.error('Failed to import delegation:', error);
-                throw new Error('Failed to import delegation: ' + error.message);
+
+                const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
+                console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
+                if (spaceDelegations.length === 0) {
+                    console.log('No valid delegations found for user and space:', { userDid, spaceDid });
+                    return res.status(403).json({
+                        error: 'No valid delegation found for this space',
+                        userDid,
+                        spaceDid
+                    });
+                }
+
+                const delegation = spaceDelegations[0];
+                console.log('Delegation object:', delegation);
+                console.log('Using delegation:', delegation.delegationCid && delegation.delegationCid.toString());
+
+                const userPrincipal = await getUserPrincipal(userDid);
+                if (!userPrincipal) {
+                    throw new Error('User principal not found');
+                }
+
+                const store = new StoreMemory();
+                uploadClient = await create({ principal: userPrincipal, store });
+                console.log('Using user principal client for upload with DID:', uploadClient.did());
+
+                // Import and add the delegation proof
+                try {
+                    console.log('Delegation CAR:', delegation.delegationCar.substring(0, 100) + '...');
+                    const delegationBytes = base64.decode(delegation.delegationCar);
+                    console.log('Decoded delegation bytes length:', delegationBytes.length);
+                    const carReader = await CarReader.fromBytes(delegationBytes);
+                    console.log('Created CAR reader');
+
+                    const blocks = [];
+                    const iterator = carReader.blocks();
+                    for await (const block of iterator) {
+                        blocks.push(block);
+                    }
+                    console.log('Collected blocks from CAR:', blocks.length);
+
+                    const importedDelegation = await importDAG(blocks);
+                    if (!importedDelegation) {
+                        throw new Error('Failed to import delegation: importDAG returned null');
+                    }
+                    await uploadClient.addProof(importedDelegation);
+                    console.log('Added delegation proof to upload client');
+
+                    await uploadClient.addSpace(importedDelegation);
+                    await uploadClient.setCurrentSpace(spaceDid);
+                    console.log('Set current space to requested space:', spaceDid);
+                } catch (error) {
+                    console.error('Failed to import delegation:', error);
+                    throw new Error('Failed to import delegation: ' + error.message);
+                }
             }
 
-            if (!importedDelegation) {
-                throw new Error('Delegation import failed - no delegation available');
-            }
-
-            // Add the delegation proof and explicitly set the requested space
-            await uploadClient.addSpace(importedDelegation);
-            await uploadClient.setCurrentSpace(spaceDid);
-            console.log('Set current space to requested space:', spaceDid);
-
-            // Write the file to a temporary location
+            // Shared upload logic
             tempFilePath = join(tmpdir(), req.file.originalname);
             await writeFile(tempFilePath, req.file.buffer);
             console.log('Wrote file to temp location:', tempFilePath);
 
-            // Create file object from the temp file
             const files = await filesFromPaths([tempFilePath]);
             const file = files[0];
             console.log('Created file object for upload');
 
-            // Upload the file
             const result = await uploadClient.uploadFile(file);
             console.log('Upload result object:', result);
-            
-            // Extract CID from result - handle both direct CID object and nested CID
+
             const cid = result.cid || result;
             const cidString = cid.toString();
             console.log('Upload successful, CID:', cidString);
 
-            // Return the upload result with proper CID
             res.json({
                 success: true,
                 cid: cidString,
@@ -180,7 +187,6 @@ router.post('/upload', uploadLimiter, upload.single('file'), async (req, res) =>
             });
 
         } finally {
-            // Clean up temp file if it exists
             if (tempFilePath) {
                 try {
                     await unlink(tempFilePath);
