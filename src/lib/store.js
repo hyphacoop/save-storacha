@@ -295,7 +295,7 @@ export async function loadSessionsFromDatabase() {
     try {
         const db = getDatabase();
         const sessions = db.prepare(`
-            SELECT sessionId, email, did as adminDid, expiresAt, isActive, lastActiveAt
+            SELECT sessionId, email, did as adminDid, expiresAt, isActive, isVerified, lastActiveAt
             FROM active_account_sessions
         `).all();
 

@@ -172,17 +172,20 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
             const file = files[0];
             console.log('Created file object for upload');
 
-            const result = await uploadClient.uploadFile(file);
+            const result = await uploadClient.uploadDirectory(files);
             console.log('Upload result object:', result);
 
             const cid = result.cid || result;
             const cidString = cid.toString();
             console.log('Upload successful, CID:', cidString);
 
+            const filename = req.file.originalname;
             res.json({
                 success: true,
                 cid: cidString,
-                size: result.size || file.size,
+                filename: filename,
+                gatewayUrl: `https://${cidString}.ipfs.w3s.link/${encodeURIComponent(filename)}`,
+                size: req.file.size,
                 carCid: result.carCid ? result.carCid.toString() : undefined
             });
 
@@ -199,6 +202,9 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
 
     } catch (error) {
         console.error('Upload error:', error);
+        if (error.message && error.message.includes('no proofs')) {
+            return res.status(401).json({ error: 'Invalid or expired session. Please log in again.' });
+        }
         res.status(500).json({ error: error.message });
     }
 });
