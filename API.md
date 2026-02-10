@@ -558,10 +558,16 @@ curl -X POST \
 ```json
 {
   "success": true,
-  "cid": "bafkreiexampleCIDforDocumentation1234567890abcdef",
+  "cid": "bafybeiexampleDirectoryCIDforDocumentation12345",
+  "filename": "HELLO_WORLD.txt",
+  "gatewayUrl": "https://bafybeiexampleDirectoryCIDforDocumentation12345.ipfs.w3s.link/HELLO_WORLD.txt",
   "size": 17
 }
 ```
+
+**Note:** The returned CID is a UnixFS directory containing the uploaded file. This preserves the original filename in IPFS:
+- `https://<cid>.ipfs.w3s.link/` — HTML directory listing showing the filename
+- `https://<cid>.ipfs.w3s.link/<filename>` — serves the actual file content
 
 **Error Responses:**
 
@@ -1037,7 +1043,9 @@ curl -X POST \
 # Response:
 {
   "success": true,
-  "cid": "bafkreiexampleCIDforUpload123456789abcdef",
+  "cid": "bafybeiexampleDirectoryCIDforUpload123456789",
+  "filename": "test-upload.txt",
+  "gatewayUrl": "https://bafybeiexampleDirectoryCIDforUpload123456789.ipfs.w3s.link/test-upload.txt",
   "size": 22
 }
 ```
