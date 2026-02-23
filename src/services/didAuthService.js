@@ -116,9 +116,7 @@ export async function verifySignedChallenge(did, challengeId, signature) {
             challengeLength: challengeRecord.challenge.length,
             challengeBytesLength: challengeBytes.length,
             signatureLength: signature.length,
-            signatureBytesLength: signatureBytes.length,
-            challenge: challengeRecord.challenge,
-            signatureBase64: signature.substring(0, 32) + '...'
+            signatureBytesLength: signatureBytes.length
         })
         
         try {
@@ -131,8 +129,7 @@ export async function verifySignedChallenge(did, challengeId, signature) {
             
             logger.info('Public key extracted', {
                 did,
-                publicKeyLength: publicKey.length,
-                publicKeyHex: Array.from(publicKey).map(b => b.toString(16).padStart(2, '0')).join('')
+                publicKeyLength: publicKey.length
             })
             
             // Use Node.js crypto for Ed25519 verification

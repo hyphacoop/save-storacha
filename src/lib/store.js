@@ -63,7 +63,11 @@ export function storeAdminServiceDidData(email, adminDid, adminServicePrincipal,
         adminServicePrincipal, // Can be null in simplified mode
         adminToAdminServiceDidDelegationCarString, // Can be null in simplified mode
     });
-    console.log(`Stored Admin data for ${email}. Admin DID: ${adminDid} (simplified mode: ${adminServicePrincipal ? 'with service DID' : 'no service DID'})`);
+    logger.info('Stored admin service DID data', {
+        email,
+        adminDid,
+        simplifiedMode: !adminServicePrincipal
+    });
 }
 
 export function getAdminData(email) {
@@ -729,14 +733,14 @@ export function clearStores() {
     delegationStore.clear();
     userPrincipalStore.clear();
     // Don't clear sessionStore as it will be populated from database
-    console.log('Stores cleared (except sessions)');
+    logger.info('Stores cleared (except sessions)');
 }
 
 // Add function to clear admin data for a specific email
 export function clearAdminData(email) {
   if (email) {
     adminStore.delete(email);
-    console.log(`Cleared admin data for ${email}`);
+    logger.info('Cleared admin data');
   }
 }
 
@@ -748,7 +752,7 @@ export function storeCachedSpaces(email, spaces) {
         cachedSpaces: spaces,
         spacesLastUpdated: Date.now()
     });
-    console.log(`Cached spaces data for ${email}`);
+    logger.info('Cached spaces data', { email, count: Array.isArray(spaces) ? spaces.length : 0 });
 }
 
 export function getCachedSpaces(email) {

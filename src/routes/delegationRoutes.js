@@ -60,10 +60,9 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         const { digest } = await sha256.digest(secretBytes);
         const userPrincipal = await ed25519.Signer.derive(digest);
         await storeUserPrincipal(userDid, userPrincipal);
-        console.log('Delegation creation: userPrincipal DID:', userPrincipal.did());
-        console.log('Delegation creation: userDid from request:', userDid);
-        console.log('Delegation creation: admin client DID:', client.did());
-        console.log('Delegation creation: DID match:', userDid === userPrincipal.did());
+        logger.debug('Derived user principal for delegation creation', {
+            principalMatch: userDid === userPrincipal.did()
+        });
 
         // Calculate expiration time
         const expirationHours = expiresIn || 24;
@@ -103,9 +102,8 @@ router.post('/create', ensureAuthenticated, async (req, res) => {
         for await (const block of delegation.export()) {
             await writer.put(block);
             blockCount++;
-            logger.info('Delegation export block', { cid: block.cid.toString() });
         }
-        logger.info('Total blocks exported for delegation', { blockCount });
+        logger.debug('Delegation exported to CAR blocks', { blockCount });
         await writer.close();
         await carPromise;
         
