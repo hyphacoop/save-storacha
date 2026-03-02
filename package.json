@@ -10,7 +10,7 @@
     "migrate:encrypt:agent-data": "node scripts/migrate-encrypt-agent-data.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:architecture": "node --experimental-vm-modules node_modules/.bin/jest tests/architecture-regression.test.mjs --runInBand",
-    "test:security": "node --experimental-vm-modules node_modules/.bin/jest tests/logger-sanitization.test.mjs tests/no-console-logging.test.mjs tests/db-encryption.test.mjs tests/architecture-regression.test.mjs --runInBand",
+    "test:security": "node --experimental-vm-modules node_modules/.bin/jest tests/logger-sanitization.test.mjs tests/no-console-logging.test.mjs tests/db-encryption.test.mjs tests/architecture-regression.test.mjs tests/health-route.test.mjs --runInBand",
     "test:regression": "node --experimental-vm-modules node_modules/.bin/jest tests/logging-integration.test.mjs --runInBand",
     "test:ci": "npm run test:security && npm run test:regression",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",

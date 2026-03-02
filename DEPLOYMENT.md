@@ -32,7 +32,7 @@ Required GitHub Environment (`staging`) secrets:
 Optional secrets:
 
 - `DEPLOY_SERVICE`: systemd service name to restart
-- `DEPLOY_HEALTHCHECK_URL`: URL to probe after restart
+- `DEPLOY_HEALTHCHECK_URL`: URL to probe after restart (recommended: `http://127.0.0.1:3000/health`)
 
 ## Remote deploy script
 
@@ -56,10 +56,12 @@ Script steps:
 
 Set these in runtime environment:
 
-- `DB_ENCRYPTION_KEY`: 32-byte key, base64 or hex encoded
+- `DB_ENCRYPTION_KEY`: single 32-byte key, base64 or hex encoded
+- `DB_ENCRYPTION_KEYS_JSON`: keyring JSON object (recommended for rotation), for example `{"v1":"<base64>","v2":"<base64>"}`
+- `DB_ENCRYPTION_ACTIVE_KEY_ID`: active key id for new writes when keyring is used
 - `REQUIRE_DB_ENCRYPTION=true`: fail closed if key is absent/invalid
 
-With encryption enabled, new `admin_agents.agentData` rows are stored as encrypted payloads (`enc:v1:*`).
+With encryption enabled, `admin_agents.agentData` rows are stored as `enc:<keyId>:<payload>`.
 
 ## Existing DB migration plan
 
@@ -74,7 +76,7 @@ npm run migrate:encrypt:agent-data
 4. Verify no plaintext remains:
 
 ```bash
-sqlite3 data/delegations.db "SELECT COUNT(*) FROM admin_agents WHERE agentData NOT LIKE 'enc:v1:%';"
+sqlite3 data/delegations.db "SELECT COUNT(*) FROM admin_agents WHERE substr(agentData,1,4) != 'enc:';"
 ```
 
 5. Set runtime env on service:
@@ -82,3 +84,7 @@ sqlite3 data/delegations.db "SELECT COUNT(*) FROM admin_agents WHERE agentData N
 - `REQUIRE_DB_ENCRYPTION=true`
 
 6. Restart service and run healthcheck.
+
+## Rotation
+
+For full key rotation steps, see `KEY_ROTATION.md`.

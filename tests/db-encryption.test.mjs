@@ -3,19 +3,35 @@ import {
     assertDbEncryptionConfig,
     encryptForStorage,
     decryptFromStorage,
-    isEncryptedValue
+    isEncryptedValue,
+    getActiveKeyId,
+    getCipherKeyId
 } from '../src/lib/dbEncryption.js';
 
 const ORIGINAL_ENV = {
     DB_ENCRYPTION_KEY: process.env.DB_ENCRYPTION_KEY,
+    DB_ENCRYPTION_KEY_ID: process.env.DB_ENCRYPTION_KEY_ID,
+    DB_ENCRYPTION_KEYS_JSON: process.env.DB_ENCRYPTION_KEYS_JSON,
+    DB_ENCRYPTION_ACTIVE_KEY_ID: process.env.DB_ENCRYPTION_ACTIVE_KEY_ID,
     REQUIRE_DB_ENCRYPTION: process.env.REQUIRE_DB_ENCRYPTION,
     NODE_ENV: process.env.NODE_ENV
 };
 
+function restoreEnv(name, value) {
+    if (typeof value === 'undefined') {
+        delete process.env[name];
+    } else {
+        process.env[name] = value;
+    }
+}
+
 afterEach(() => {
-    process.env.DB_ENCRYPTION_KEY = ORIGINAL_ENV.DB_ENCRYPTION_KEY;
-    process.env.REQUIRE_DB_ENCRYPTION = ORIGINAL_ENV.REQUIRE_DB_ENCRYPTION;
-    process.env.NODE_ENV = ORIGINAL_ENV.NODE_ENV;
+    restoreEnv('DB_ENCRYPTION_KEY', ORIGINAL_ENV.DB_ENCRYPTION_KEY);
+    restoreEnv('DB_ENCRYPTION_KEY_ID', ORIGINAL_ENV.DB_ENCRYPTION_KEY_ID);
+    restoreEnv('DB_ENCRYPTION_KEYS_JSON', ORIGINAL_ENV.DB_ENCRYPTION_KEYS_JSON);
+    restoreEnv('DB_ENCRYPTION_ACTIVE_KEY_ID', ORIGINAL_ENV.DB_ENCRYPTION_ACTIVE_KEY_ID);
+    restoreEnv('REQUIRE_DB_ENCRYPTION', ORIGINAL_ENV.REQUIRE_DB_ENCRYPTION);
+    restoreEnv('NODE_ENV', ORIGINAL_ENV.NODE_ENV);
 });
 
 describe('DB encryption', () => {
@@ -29,6 +45,7 @@ describe('DB encryption', () => {
         const plaintext = '{"id":"device","secret":"abc"}';
         const encrypted = encryptForStorage(plaintext);
         expect(isEncryptedValue(encrypted)).toBe(true);
+        expect(getCipherKeyId(encrypted)).toBe('v1');
         expect(encrypted).not.toBe(plaintext);
         expect(decryptFromStorage(encrypted)).toBe(plaintext);
     });
@@ -64,6 +81,56 @@ describe('DB encryption', () => {
         process.env.REQUIRE_DB_ENCRYPTION = 'true';
         process.env.NODE_ENV = 'test';
 
-        expect(() => assertDbEncryptionConfig()).toThrow(/DB encryption key is required/);
+        expect(() => assertDbEncryptionConfig()).toThrow(/required/);
+    });
+
+    test('supports keyring config and encrypts with active key id', () => {
+        const v1 = Buffer.alloc(32, 1).toString('base64');
+        const v2 = Buffer.alloc(32, 2).toString('base64');
+        process.env.DB_ENCRYPTION_KEYS_JSON = JSON.stringify({ v1, v2 });
+        process.env.DB_ENCRYPTION_ACTIVE_KEY_ID = 'v2';
+        process.env.REQUIRE_DB_ENCRYPTION = 'true';
+        process.env.NODE_ENV = 'test';
+
+        assertDbEncryptionConfig();
+        expect(getActiveKeyId()).toBe('v2');
+
+        const encrypted = encryptForStorage('rotate-me');
+        expect(getCipherKeyId(encrypted)).toBe('v2');
+        expect(decryptFromStorage(encrypted)).toBe('rotate-me');
+    });
+
+    test('can decrypt old-key ciphertext when old key is still in keyring', () => {
+        const v1 = Buffer.alloc(32, 4).toString('base64');
+        const v2 = Buffer.alloc(32, 5).toString('base64');
+        process.env.DB_ENCRYPTION_KEYS_JSON = JSON.stringify({ v1, v2 });
+        process.env.DB_ENCRYPTION_ACTIVE_KEY_ID = 'v1';
+        const oldCiphertext = encryptForStorage('legacy');
+
+        process.env.DB_ENCRYPTION_ACTIVE_KEY_ID = 'v2';
+        expect(decryptFromStorage(oldCiphertext)).toBe('legacy');
+    });
+
+    test('fails to decrypt ciphertext if its key id is absent from keyring', () => {
+        const v1 = Buffer.alloc(32, 9).toString('base64');
+        const v2 = Buffer.alloc(32, 10).toString('base64');
+
+        process.env.DB_ENCRYPTION_KEYS_JSON = JSON.stringify({ v1 });
+        process.env.DB_ENCRYPTION_ACTIVE_KEY_ID = 'v1';
+        const ciphertext = encryptForStorage('secret');
+
+        process.env.DB_ENCRYPTION_KEYS_JSON = JSON.stringify({ v2 });
+        process.env.DB_ENCRYPTION_ACTIVE_KEY_ID = 'v2';
+        expect(() => decryptFromStorage(ciphertext)).toThrow(/not available/);
+    });
+
+    test('fails when keyring is provided without a valid active key id', () => {
+        const v1 = Buffer.alloc(32, 7).toString('base64');
+        const v2 = Buffer.alloc(32, 8).toString('base64');
+        process.env.DB_ENCRYPTION_KEYS_JSON = JSON.stringify({ v1, v2 });
+        delete process.env.DB_ENCRYPTION_ACTIVE_KEY_ID;
+        process.env.REQUIRE_DB_ENCRYPTION = 'true';
+
+        expect(() => assertDbEncryptionConfig()).toThrow(/DB_ENCRYPTION_ACTIVE_KEY_ID/);
     });
 });
