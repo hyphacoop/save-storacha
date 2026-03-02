@@ -58,4 +58,12 @@ describe('DB encryption', () => {
 
         expect(() => assertDbEncryptionConfig()).toThrow(/DB encryption key is required/);
     });
+
+    test('rejects malformed base64 key variants', () => {
+        process.env.DB_ENCRYPTION_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA?';
+        process.env.REQUIRE_DB_ENCRYPTION = 'true';
+        process.env.NODE_ENV = 'test';
+
+        expect(() => assertDbEncryptionConfig()).toThrow(/DB encryption key is required/);
+    });
 });

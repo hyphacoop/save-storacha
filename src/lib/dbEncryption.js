@@ -4,6 +4,7 @@ import { logger } from './logger.js';
 const ENCRYPTED_PREFIX = 'enc:v1:';
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+const BASE64_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 function parseKey(rawKey) {
     if (!rawKey || typeof rawKey !== 'string') {
@@ -15,20 +16,14 @@ function parseKey(rawKey) {
         return null;
     }
 
-    // Support either base64 or hex encoded keys.
-    let decoded;
-    try {
-        decoded = Buffer.from(trimmed, 'base64');
-        if (decoded.length === KEY_BYTES) {
-            return decoded;
-        }
-    } catch {
-        // Fall through and try hex.
+    if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+        return Buffer.from(trimmed, 'hex');
     }
 
-    if (/^[0-9a-fA-F]+$/.test(trimmed)) {
-        decoded = Buffer.from(trimmed, 'hex');
-        if (decoded.length === KEY_BYTES) {
+    if (trimmed.length % 4 === 0 && BASE64_REGEX.test(trimmed)) {
+        const decoded = Buffer.from(trimmed, 'base64');
+        // Enforce canonical base64 form to avoid accepting malformed variants.
+        if (decoded.length === KEY_BYTES && decoded.toString('base64') === trimmed) {
             return decoded;
         }
     }
