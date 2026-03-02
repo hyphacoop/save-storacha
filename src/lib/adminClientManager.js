@@ -2,6 +2,7 @@ import { create as createClient } from '@storacha/client';
 import { StoreMemory } from '@storacha/client/stores/memory';
 import * as Signer from '@ucanto/principal/ed25519';
 import { logger } from './logger.js';
+import { decryptFromStorage, maybeReencryptAgentData } from './dbEncryption.js';
 
 const clientCache = new Map();
 
@@ -99,15 +100,18 @@ export async function getAdminClient(email, did) {
     const { getDatabase } = await import('../lib/db.js');
     const db = getDatabase();
 
-    const agent = db.prepare('SELECT agentData FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
+    const agent = db.prepare('SELECT id, agentData FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
         .get(email, did, 'active');
 
     if (!agent || !agent.agentData) {
         throw new Error(`No active agent found for device ${did} with email ${email}`);
     }
 
+    const principalKey = decryptFromStorage(agent.agentData);
+    maybeReencryptAgentData(db, agent.id, agent.agentData);
+
     logger.info('Initializing client from stored device agent', { email, did });
-    const client = await getClientForPrincipal(agent.agentData);
+    const client = await getClientForPrincipal(principalKey);
     clientCache.set(cacheKey, client);
     return client;
 } 

@@ -22,6 +22,7 @@ import { base64url } from 'multiformats/bases/base64';
 import cryptoRandomString from 'crypto-random-string';
 import { logger } from './logger.js';
 import { getDatabase } from './db.js';
+import { decryptFromStorage, maybeReencryptAgentData } from './dbEncryption.js';
 
 /**
  * Generates bridge tokens using either admin's client or delegated user's client
@@ -103,15 +104,17 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
 
         // Get the admin's client with their loaded delegations from login
         const db = getDatabase();
-        const adminAgent = db.prepare('SELECT agentData, status FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+        const adminAgent = db.prepare('SELECT id, agentData, status FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
         
         if (!adminAgent || adminAgent.status !== 'active') {
             throw new Error(`No active admin agent found for ${adminEmail}`);
         }
 
         // Get the admin's client with their loaded delegations from login
+        const principalKey = decryptFromStorage(adminAgent.agentData);
+        maybeReencryptAgentData(db, adminAgent.id, adminAgent.agentData);
         const { getClientForPrincipal } = await import('./adminClientManager.js');
-        client = await getClientForPrincipal(adminAgent.agentData);
+        client = await getClientForPrincipal(principalKey);
         
         // Ensure we have the latest delegations
         try {

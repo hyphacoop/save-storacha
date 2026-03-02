@@ -6,6 +6,7 @@ import {
 import { logger } from '../lib/logger.js';
 import { getDatabase } from '../lib/db.js';
 import { getAdminClient, createAndAuthorizeDeviceAgent } from '../lib/adminClientManager.js';
+import { encryptForStorage } from '../lib/dbEncryption.js';
 import * as DidAuthService from './didAuthService.js';
 
 /**
@@ -28,7 +29,7 @@ async function onboardNewAdminInBackground(email, did, sessionId) {
         db.prepare(`
             INSERT OR REPLACE INTO admin_agents (adminEmail, did, agentData, status, createdAt, updatedAt, planProduct)
             VALUES (?, ?, ?, 'active', ?, ?, ?)
-        `).run(email, did, principalKey, now, now, planProduct);
+        `).run(email, did, encryptForStorage(principalKey), now, now, planProduct);
         logger.info('ONBOARD: Stored device agent', { email, did });
 
         // Store DID mapping after email verification
@@ -91,7 +92,7 @@ async function handleNewDeviceLogin(email, did, sessionId) {
         db.prepare(`
             INSERT OR REPLACE INTO admin_agents (adminEmail, did, agentData, status, createdAt, updatedAt, planProduct)
             VALUES (?, ?, ?, 'active', ?, ?, ?)
-        `).run(email, did, principalKey, now, now, planProduct);
+        `).run(email, did, encryptForStorage(principalKey), now, now, planProduct);
         logger.info('NEW DEVICE: Stored device agent', { email, did });
 
         // Store DID mapping after email verification
