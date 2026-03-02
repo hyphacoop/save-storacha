@@ -28,9 +28,89 @@ const LOG_LEVELS = {
     DEBUG: 3   // Detailed debugging information
 };
 
+const REDACTED = '[REDACTED]';
+
+const SENSITIVE_KEY_PARTS = [
+    'token',
+    'secret',
+    'password',
+    'session',
+    'cookie',
+    'authorization',
+    'signature',
+    'challenge',
+    'delegation',
+    'agentdata',
+    'privatekey',
+    'apikey',
+    'email',
+    'did',
+    'ipaddress',
+    'useragent'
+];
+
+const STRING_REDACTIONS = [
+    {
+        regex: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        replacement: '[REDACTED_EMAIL]'
+    },
+    {
+        regex: /did:[a-z0-9]+:[A-Za-z0-9._:-]+/gi,
+        replacement: '[REDACTED_DID]'
+    },
+    {
+        regex: /(\b(?:authorization|x-auth-secret|x-session-id)\b\s*[:=]\s*)([^\s,;]+)/gi,
+        replacement: '$1[REDACTED]'
+    },
+    {
+        regex: /(\b(?:token|secret|password|signature|challenge|api[_-]?key|session)\b[^:=\n\r]{0,20}[:=]\s*)([^\s,;]+)/gi,
+        replacement: '$1[REDACTED]'
+    },
+    {
+        regex: /\b[a-f0-9]{32,}\b/gi,
+        replacement: '[REDACTED_HEX]'
+    },
+    {
+        regex: /\b[A-Za-z0-9+/_=-]{64,}\b/g,
+        replacement: '[REDACTED_BLOB]'
+    }
+];
+
+function resolveLogLevel(rawLevel, fallbackLevel) {
+    if (rawLevel === undefined || rawLevel === null || rawLevel === '') {
+        return fallbackLevel;
+    }
+
+    const normalized = String(rawLevel).trim().toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(LOG_LEVELS, normalized)) {
+        return LOG_LEVELS[normalized];
+    }
+
+    const numeric = Number(normalized);
+    if (Number.isInteger(numeric) && numeric >= LOG_LEVELS.ERROR && numeric <= LOG_LEVELS.DEBUG) {
+        return numeric;
+    }
+
+    return fallbackLevel;
+}
+
 // Environment-based log level selection
-// Production defaults to INFO to reduce noise, development includes DEBUG for troubleshooting
-const CURRENT_LOG_LEVEL = process.env.NODE_ENV === 'production' ? LOG_LEVELS.INFO : LOG_LEVELS.DEBUG;
+// Production defaults to WARN to minimize potentially sensitive noise.
+const DEFAULT_LOG_LEVEL = process.env.NODE_ENV === 'production' ? LOG_LEVELS.WARN : LOG_LEVELS.DEBUG;
+let CURRENT_LOG_LEVEL = resolveLogLevel(process.env.LOG_LEVEL, DEFAULT_LOG_LEVEL);
+
+function isSensitiveKey(key) {
+    const normalized = String(key).toLowerCase();
+    return SENSITIVE_KEY_PARTS.some((sensitivePart) => normalized.includes(sensitivePart));
+}
+
+function sanitizeString(value) {
+    let sanitized = value;
+    for (const { regex, replacement } of STRING_REDACTIONS) {
+        sanitized = sanitized.replace(regex, replacement);
+    }
+    return sanitized;
+}
 
 /**
  * Sanitizes sensitive data from log entries to prevent credential leakage
@@ -42,23 +122,57 @@ const CURRENT_LOG_LEVEL = process.env.NODE_ENV === 'production' ? LOG_LEVELS.INF
  * @param {any} data - The data to sanitize
  * @returns {any} - The sanitized data with sensitive fields redacted
  */
-function sanitizeData(data) {
-    if (typeof data !== 'object' || data === null) return data;
-    
-    // List of field names that commonly contain sensitive information
-    const sensitive = ['token', 'secret', 'key', 'password', 'did', 'sessionId'];
-    const sanitized = { ...data };
-    
-    for (const key of Object.keys(sanitized)) {
-        if (sensitive.some(s => key.toLowerCase().includes(s))) {
-            // Replace sensitive values with redaction marker
-            sanitized[key] = '[REDACTED]';
-        } else if (typeof sanitized[key] === 'object') {
-            // Recursively sanitize nested objects
-            sanitized[key] = sanitizeData(sanitized[key]);
-        }
+function sanitizeData(data, seen = new WeakSet()) {
+    if (data === null || data === undefined) return data;
+
+    if (typeof data === 'string') {
+        return sanitizeString(data);
     }
-    
+
+    if (typeof data === 'number' || typeof data === 'boolean') {
+        return data;
+    }
+
+    if (typeof data === 'bigint') {
+        return data.toString();
+    }
+
+    if (data instanceof Error) {
+        return {
+            name: data.name,
+            message: sanitizeString(data.message),
+            stack: process.env.NODE_ENV === 'development' ? sanitizeString(data.stack || '') : undefined
+        };
+    }
+
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+        return '[REDACTED_BINARY]';
+    }
+
+    if (Array.isArray(data)) {
+        return data.map((item) => sanitizeData(item, seen));
+    }
+
+    if (typeof data !== 'object') {
+        return data;
+    }
+
+    if (seen.has(data)) {
+        return '[Circular]';
+    }
+    seen.add(data);
+
+    const sanitized = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (isSensitiveKey(key)) {
+            sanitized[key] = REDACTED;
+            continue;
+        }
+
+        sanitized[key] = sanitizeData(value, seen);
+    }
+    seen.delete(data);
+
     return sanitized;
 }
 
@@ -79,10 +193,11 @@ function sanitizeData(data) {
 function formatMessage(level, message, data = {}) {
     const timestamp = new Date().toISOString();
     const sanitizedData = sanitizeData(data);
+    const safeMessage = sanitizeString(String(message ?? ''));
     return {
         timestamp,
         level,
-        message,
+        message: safeMessage,
         ...sanitizedData
     };
 }
@@ -148,4 +263,13 @@ export const logger = {
             CURRENT_LOG_LEVEL = level;
         }
     }
-}; 
+};
+
+// Exported for tests and for optional call-site pre-sanitization.
+export function sanitizeForLog(data) {
+    return sanitizeData(data);
+}
+
+export function sanitizeLogMessage(message) {
+    return sanitizeString(String(message ?? ''));
+}

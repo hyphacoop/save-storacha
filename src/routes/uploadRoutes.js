@@ -13,6 +13,7 @@ import { getAdminClient } from '../lib/adminClientManager.js';
 import { flexibleAuth } from './spaceRoutes.js';
 import { StoreMemory } from '@storacha/client/stores/memory';
 import { create } from '@storacha/client';
+import { logger } from '../lib/logger.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -68,10 +69,8 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        console.log('Upload request received:', {
-            userDid,
+        logger.debug('Upload request received', {
             userType,
-            spaceDid,
             filename: req.file.originalname,
             size: req.file.size
         });
@@ -87,7 +86,7 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
                 const hasAdminAccess = adminSpaces.some(space => space.did === spaceDid);
 
                 if (!hasAdminAccess) {
-                    console.log('Admin does not have access to space:', { adminEmail, spaceDid });
+                    logger.warn('Admin does not have access to requested space', { adminEmail, spaceDid });
                     return res.status(403).json({
                         error: 'Admin does not have access to this space',
                         adminEmail,
@@ -96,22 +95,26 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
                 }
 
                 uploadClient = await getAdminClient(adminEmail, req.userDid);
-                console.log('Using admin client for upload with DID:', uploadClient.did());
+                logger.debug('Using admin client for upload');
                 await uploadClient.setCurrentSpace(spaceDid);
-                console.log('Set current space to requested space:', spaceDid);
+                logger.debug('Set current space for upload');
             } else {
                 // Delegated user path: validate delegation and create user client
                 const delegations = await getDelegationsForUser(userDid);
-                console.log('Found delegations:', delegations ? delegations.length : 0);
+                logger.debug('Resolved user delegations for upload', {
+                    delegationCount: delegations ? delegations.length : 0
+                });
                 if (!delegations || delegations.length === 0) {
-                    console.log('No valid delegations found for user:', userDid);
+                    logger.warn('No valid delegations found for upload request');
                     return res.status(403).json({ error: 'No valid delegation found', userDid });
                 }
 
                 const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
-                console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
+                logger.debug('Filtered delegations for upload space', {
+                    spaceDelegationCount: spaceDelegations.length
+                });
                 if (spaceDelegations.length === 0) {
-                    console.log('No valid delegations found for user and space:', { userDid, spaceDid });
+                    logger.warn('No valid delegations found for requested upload space');
                     return res.status(403).json({
                         error: 'No valid delegation found for this space',
                         userDid,
@@ -120,8 +123,7 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
                 }
 
                 const delegation = spaceDelegations[0];
-                console.log('Delegation object:', delegation);
-                console.log('Using delegation:', delegation.delegationCid && delegation.delegationCid.toString());
+                logger.debug('Using first matching delegation for upload');
 
                 const userPrincipal = await getUserPrincipal(userDid);
                 if (!userPrincipal) {
@@ -130,35 +132,32 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
 
                 const store = new StoreMemory();
                 uploadClient = await create({ principal: userPrincipal, store });
-                console.log('Using user principal client for upload with DID:', uploadClient.did());
+                logger.debug('Initialized delegated upload client');
 
                 // Import and add the delegation proof
                 try {
-                    console.log('Delegation CAR:', delegation.delegationCar.substring(0, 100) + '...');
                     const delegationBytes = base64.decode(delegation.delegationCar);
-                    console.log('Decoded delegation bytes length:', delegationBytes.length);
                     const carReader = await CarReader.fromBytes(delegationBytes);
-                    console.log('Created CAR reader');
 
                     const blocks = [];
                     const iterator = carReader.blocks();
                     for await (const block of iterator) {
                         blocks.push(block);
                     }
-                    console.log('Collected blocks from CAR:', blocks.length);
+                    logger.debug('Decoded delegation CAR for upload', { blockCount: blocks.length });
 
                     const importedDelegation = await importDAG(blocks);
                     if (!importedDelegation) {
                         throw new Error('Failed to import delegation: importDAG returned null');
                     }
                     await uploadClient.addProof(importedDelegation);
-                    console.log('Added delegation proof to upload client');
+                    logger.debug('Added delegation proof to upload client');
 
                     await uploadClient.addSpace(importedDelegation);
                     await uploadClient.setCurrentSpace(spaceDid);
-                    console.log('Set current space to requested space:', spaceDid);
+                    logger.debug('Set current space for delegated upload');
                 } catch (error) {
-                    console.error('Failed to import delegation:', error);
+                    logger.error('Failed to import delegation for upload', { error: error.message });
                     throw new Error('Failed to import delegation: ' + error.message);
                 }
             }
@@ -166,18 +165,16 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
             // Shared upload logic
             tempFilePath = join(tmpdir(), req.file.originalname);
             await writeFile(tempFilePath, req.file.buffer);
-            console.log('Wrote file to temp location:', tempFilePath);
+            logger.debug('Wrote upload temp file');
 
             const files = await filesFromPaths([tempFilePath]);
-            const file = files[0];
-            console.log('Created file object for upload');
+            logger.debug('Created upload file handles', { fileCount: files.length });
 
             const result = await uploadClient.uploadDirectory(files);
-            console.log('Upload result object:', result);
 
             const cid = result.cid || result;
             const cidString = cid.toString();
-            console.log('Upload successful, CID:', cidString);
+            logger.info('Upload successful', { cid: cidString, size: req.file.size });
 
             const filename = req.file.originalname;
             res.json({
@@ -193,15 +190,15 @@ router.post('/upload', uploadLimiter, upload.single('file'), flexibleAuth, async
             if (tempFilePath) {
                 try {
                     await unlink(tempFilePath);
-                    console.log('Cleaned up temp file:', tempFilePath);
+                    logger.debug('Cleaned up upload temp file');
                 } catch (error) {
-                    console.error('Failed to clean up temp file:', error);
+                    logger.warn('Failed to clean up upload temp file', { error: error.message });
                 }
             }
         }
 
     } catch (error) {
-        console.error('Upload error:', error);
+        logger.error('Upload request failed', { error: error.message });
         if (error.message && error.message.includes('no proofs')) {
             return res.status(401).json({ error: 'Invalid or expired session. Please log in again.' });
         }
@@ -220,11 +217,7 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             return res.status(400).json({ error: 'Missing spaceDid' });
         }
 
-        console.log('Upload list request received:', {
-            userDid,
-            userType,
-            spaceDid
-        });
+        logger.debug('Upload listing request received', { userType });
 
         // For admin users, check if they have access to this space
         if (userType === 'admin') {
@@ -233,7 +226,7 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             const hasAdminAccess = adminSpaces.some(space => space.did === spaceDid);
             
             if (!hasAdminAccess) {
-                console.log('Admin does not have access to space:', { adminEmail, spaceDid });
+                logger.warn('Admin does not have access to requested upload-list space', { adminEmail, spaceDid });
                 return res.status(403).json({ 
                     error: 'Admin does not have access to this space',
                     adminEmail,
@@ -245,17 +238,15 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             let listClient;
             try {
                 listClient = await getAdminClient(adminEmail, req.userDid);
-                console.log('Using admin client for upload listing with DID:', listClient.did());
+                logger.debug('Initialized admin client for upload listing');
             } catch (error) {
-                console.log('Failed to get admin client:', error.message);
+                logger.error('Failed to initialize admin client for upload listing', { error: error.message });
                 throw new Error(`Failed to get admin client for upload listing: ${error.message}`);
             }
             
             // Set the current space for the client
             await listClient.setCurrentSpace(spaceDid);
-            
-            // List uploads using the w3up client
-            console.log('Listing uploads for admin...');
+            logger.debug('Listing uploads for admin');
             
             const uploads = [];
             let cursor = req.query.cursor; // Support pagination
@@ -263,12 +254,11 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             
             try {
                 // Use the capability.upload.list method on the client
-                console.log('Using client.capability.upload.list method with cursor:', cursor, 'size:', size);
+                logger.debug('Calling capability.upload.list for admin uploads', { hasCursor: !!cursor, size });
                 const result = await listClient.capability.upload.list({ 
                     cursor: cursor || '', 
                     size: size 
                 });
-                console.log('List result:', result);
                 
                 if (result && result.results) {
                     for (const upload of result.results) {
@@ -297,23 +287,27 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                 });
                 
             } catch (error) {
-                console.error('Failed to list uploads:', error);
+                logger.error('Failed to list uploads for admin', { error: error.message });
                 throw new Error('Failed to list uploads: ' + error.message);
             }
         } else {
             // For delegated users, check delegations to confirm access
             const delegations = await getDelegationsForUser(userDid);
-            console.log('Found delegations:', delegations ? delegations.length : 0);
+            logger.debug('Resolved user delegations for upload listing', {
+                delegationCount: delegations ? delegations.length : 0
+            });
             if (!delegations || delegations.length === 0) {
-                console.log('No valid delegations found for user:', userDid);
+                logger.warn('No valid delegations found for upload listing');
                 return res.status(403).json({ error: 'No valid delegation found', userDid });
             }
 
             // Filter delegations for the specific space
             const spaceDelegations = delegations.filter(d => d.spaceDid === spaceDid);
-            console.log('Found space delegations:', spaceDelegations.length, 'for space:', spaceDid);
+            logger.debug('Filtered delegations for upload listing space', {
+                spaceDelegationCount: spaceDelegations.length
+            });
             if (spaceDelegations.length === 0) {
-                console.log('No valid delegations found for user and space:', { userDid, spaceDid });
+                logger.warn('No valid delegation found for user in requested upload listing space');
                 return res.status(403).json({ 
                     error: 'No valid delegation found for this space'
                 });
@@ -321,7 +315,7 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
 
         // Use the first valid delegation
         const delegation = spaceDelegations[0];
-        console.log('Delegation object:', delegation);
+        logger.debug('Using first matching delegation for upload listing');
 
         // Initialize variables
         let importedDelegation = null;
@@ -336,15 +330,12 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             // Create Storacha client with user principal
             const store = new StoreMemory();
             const listClient = await create({ principal: userPrincipal, store });
-            console.log('Using user principal client for upload listing with DID:', listClient.did());
+            logger.debug('Initialized delegated client for upload listing');
 
             // Import and add the delegation proof
             try {
-                console.log('Delegation CAR:', delegation.delegationCar.substring(0, 100) + '...');
                 const delegationBytes = base64.decode(delegation.delegationCar);
-                console.log('Decoded delegation bytes length:', delegationBytes.length);
                 const carReader = await CarReader.fromBytes(delegationBytes);
-                console.log('Created CAR reader');
 
                 // Get all blocks from the CAR file
                 const blocks = [];
@@ -352,7 +343,7 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                 for await (const block of iterator) {
                     blocks.push(block);
                 }
-                console.log('Collected blocks from CAR:', blocks.length);
+                logger.debug('Decoded delegation CAR for upload listing', { blockCount: blocks.length });
 
                 // Import the delegation using the blocks
                 importedDelegation = await importDAG(blocks);
@@ -360,9 +351,9 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                     throw new Error('Failed to import delegation: importDAG returned null');
                 }
                 await listClient.addProof(importedDelegation);
-                console.log('Added delegation proof to list client');
+                logger.debug('Added delegation proof to listing client');
             } catch (error) {
-                console.error('Failed to import delegation:', error);
+                logger.error('Failed to import delegation for upload listing', { error: error.message });
                 throw new Error('Failed to import delegation: ' + error.message);
             }
 
@@ -373,10 +364,10 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             // Add the delegation proof and explicitly set the requested space
             await listClient.addSpace(importedDelegation);
             await listClient.setCurrentSpace(spaceDid);
-            console.log('Set current space for listing to requested space:', spaceDid);
+            logger.debug('Set current space for delegated upload listing');
 
             // List uploads using the w3up client
-            console.log('Listing uploads...');
+            logger.debug('Listing uploads for delegated user');
             
             const uploads = [];
             let cursor = req.query.cursor; // Support pagination
@@ -384,12 +375,11 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
             
             try {
                 // Use the capability.upload.list method on the w3up client
-                console.log('Using client.capability.upload.list method with cursor:', cursor, 'size:', size);
+                logger.debug('Calling capability.upload.list for delegated uploads', { hasCursor: !!cursor, size });
                 const result = await listClient.capability.upload.list({ 
                     cursor: cursor || '', 
                     size: size 
                 });
-                console.log('List result:', result);
                 
                 if (result && result.results) {
                     for (const upload of result.results) {
@@ -418,17 +408,17 @@ router.get('/uploads', flexibleAuth, async (req, res) => {
                 });
                 
             } catch (error) {
-                console.error('Error listing uploads:', error);
+                logger.error('Failed to list uploads for delegated user', { error: error.message });
                 throw new Error(`Failed to list uploads: ${error.message}`);
             }
             
         } catch (error) {
-            console.error('Upload listing error:', error);
+            logger.error('Upload listing failed for delegated user', { error: error.message });
             res.status(500).json({ error: error.message });
         }
     }
     } catch (error) {
-        console.error('Upload listing error:', error);
+        logger.error('Upload listing request failed', { error: error.message });
         res.status(500).json({ error: error.message });
     }
         

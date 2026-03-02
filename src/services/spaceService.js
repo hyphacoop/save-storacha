@@ -1,6 +1,7 @@
 import { storeCachedSpaces } from '../lib/store.js';
 import { getAdminClient } from '../lib/adminClientManager.js';
 import { getDatabase } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
 
 /**
  * Get the admin email associated with a DID if it exists
@@ -18,7 +19,7 @@ export async function getAdminEmailFromDid(did) {
 
         return result ? result.email : null;
     } catch (error) {
-        console.error(`Error getting admin email for DID ${did}:`, error);
+        logger.error('Failed to get admin email for DID', { did, error: error.message });
         return null;
     }
 }
@@ -44,7 +45,7 @@ export async function getSpaces(adminEmail, did) {
         return spacesList;
 
     } catch (error) {
-        console.error(`Error fetching spaces for ${adminEmail}:`, error);
+        logger.error('Failed to fetch spaces', { adminEmail, did, error: error.message });
         throw new Error(`Failed to fetch spaces: ${error.message}`);
     }
 } 
@@ -64,9 +65,12 @@ export async function getSpacesWithSync(adminEmail, did) {
         // Ensure we have the latest delegations before fetching spaces
         try {
             await client.capability.access.claim();
-            console.log(`Refreshed delegations for admin: ${adminEmail}`);
+            logger.info('Refreshed delegations for admin');
         } catch (error) {
-            console.warn(`Could not refresh delegations for admin ${adminEmail}, using cached info:`, error.message);
+            logger.warn('Could not refresh delegations for admin, using cached info', {
+                adminEmail,
+                error: error.message
+            });
         }
         
         const serviceSpaces = await client.spaces();
@@ -93,19 +97,19 @@ export async function getSpacesWithSync(adminEmail, did) {
                     Date.now()
                 );
             } catch (error) {
-                console.error(`Failed to sync space ${space.did} to database:`, error);
+                logger.error('Failed to sync space to database', { spaceDid: space.did, error: error.message });
             }
         }
 
         // Update in-memory cache with the fresh service data
         storeCachedSpaces(adminEmail, serviceSpacesList);
-        console.log(`Updated in-memory cache for ${adminEmail} with ${serviceSpacesList.length} spaces`);
+        logger.info('Updated in-memory cache with admin spaces', { count: serviceSpacesList.length });
 
         // Return the fresh service data
         return serviceSpacesList;
 
     } catch (error) {
-        console.error(`Error fetching spaces with sync for ${adminEmail}:`, error);
+        logger.error('Failed to fetch spaces with sync', { adminEmail, did, error: error.message });
         throw new Error(`Failed to fetch spaces: ${error.message}`);
     }
 } 

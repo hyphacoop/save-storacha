@@ -48,8 +48,12 @@ async function ensureDataDir() {
 export async function initializeDatabase() {
     await ensureDataDir();
     
-    // Create database connection with verbose logging in debug mode
-    const db = new Database(DB_PATH, { verbose: logger.debug });
+    // Query-level logging is opt-in so production/staging do not emit SQL by default.
+    const shouldLogQueries = process.env.LOG_DB_QUERIES === 'true';
+    const db = new Database(DB_PATH, shouldLogQueries
+        ? { verbose: (sql) => logger.debug('SQL query', { sql }) }
+        : {}
+    );
     logger.info('Database initialized', { path: DB_PATH });
 
     try {

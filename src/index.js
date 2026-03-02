@@ -35,18 +35,19 @@ app.use(cors());
 // CAR files can be large, so we allow up to 50MB payloads
 app.use(express.json({ limit: '50mb' }));
 
-// Request logging middleware - captures incoming request metadata for debugging and monitoring
+// Request logging middleware - logs minimal metadata only.
 app.use((req, res, next) => {
-    logger.info('Incoming request', {
-        method: req.method,
-        path: req.path,
-        query: req.query,
-        headers: {
-            'content-type': req.headers['content-type'],
-            'x-session-id': req.headers['x-session-id'],
-            'x-user-did': req.headers['x-user-did']
-        }
+    const startedAt = Date.now();
+
+    res.on('finish', () => {
+        logger.debug('HTTP request completed', {
+            method: req.method,
+            path: req.path,
+            statusCode: res.statusCode,
+            durationMs: Date.now() - startedAt
+        });
     });
+
     next();
 });
 
