@@ -10,11 +10,9 @@ The GitHub Actions workflow at `.github/workflows/ci-deploy.yml` enforces:
 
 `test:ci` currently runs:
 
-- `tests/logger-sanitization.test.mjs`
-- `tests/no-console-logging.test.mjs`
 - `tests/db-encryption.test.mjs`
 - `tests/architecture-regression.test.mjs`
-- `tests/logging-integration.test.mjs`
+- `tests/health-route.test.mjs`
 
 ## Deployment Model
 
