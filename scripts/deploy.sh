@@ -12,7 +12,8 @@ ROLLBACK_DONE=0
 
 restart_service() {
   local service="$1"
-  if systemctl restart "$service"; then
+  if [[ "$(id -u)" -eq 0 ]]; then
+    systemctl restart "$service"
     return 0
   fi
 
@@ -22,6 +23,26 @@ restart_service() {
   fi
 
   echo "Failed to restart ${service}: no non-interactive privilege path available"
+  return 1
+}
+
+check_health_with_retry() {
+  local url="$1"
+  local max_attempts="${DEPLOY_HEALTHCHECK_ATTEMPTS:-20}"
+  local sleep_seconds="${DEPLOY_HEALTHCHECK_INTERVAL_SECONDS:-2}"
+  local attempt=1
+
+  while (( attempt <= max_attempts )); do
+    if curl -fsS "$url" >/dev/null; then
+      echo "Health check passed on attempt ${attempt}/${max_attempts}"
+      return 0
+    fi
+    echo "Health check attempt ${attempt}/${max_attempts} failed; retrying in ${sleep_seconds}s"
+    sleep "$sleep_seconds"
+    attempt=$((attempt + 1))
+  done
+
+  echo "Health check failed after ${max_attempts} attempts: ${url}"
   return 1
 }
 
@@ -67,7 +88,7 @@ fi
 
 if [[ -n "${DEPLOY_HEALTHCHECK_URL:-}" ]]; then
   echo "Running health check ${DEPLOY_HEALTHCHECK_URL}"
-  curl -fsS "${DEPLOY_HEALTHCHECK_URL}" >/dev/null
+  check_health_with_retry "${DEPLOY_HEALTHCHECK_URL}"
 fi
 
 trap - ERR
