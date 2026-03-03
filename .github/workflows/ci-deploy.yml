@@ -85,5 +85,17 @@ jobs:
           DEPLOY_HEALTHCHECK_URL: ${{ secrets.DEPLOY_HEALTHCHECK_URL }}
           GIT_SHA: ${{ github.sha }}
         run: |
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" \
-            "cd '$DEPLOY_PATH' && DEPLOY_REF='$GIT_SHA' DEPLOY_SERVICE='$DEPLOY_SERVICE' DEPLOY_HEALTHCHECK_URL='$DEPLOY_HEALTHCHECK_URL' ./scripts/deploy.sh"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "set -euo pipefail
+            mkdir -p '$DEPLOY_PATH'
+            cd '$DEPLOY_PATH'
+
+            if [ ! -d .git ]; then
+              git init
+              git remote add origin https://github.com/hyphacoop/save-storacha.git
+            fi
+
+            git fetch --prune origin
+            git checkout --force '$GIT_SHA'
+
+            DEPLOY_REF='$GIT_SHA' DEPLOY_SERVICE='$DEPLOY_SERVICE' DEPLOY_HEALTHCHECK_URL='$DEPLOY_HEALTHCHECK_URL' ./scripts/deploy.sh
+          "
