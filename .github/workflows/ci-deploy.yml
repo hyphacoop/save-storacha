@@ -37,13 +37,31 @@ jobs:
     environment: staging
     if: >
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      secrets.DEPLOY_HOST != '' &&
-      secrets.DEPLOY_USER != '' &&
-      secrets.DEPLOY_PATH != '' &&
-      secrets.DEPLOY_SSH_KEY != '' &&
-      secrets.DEPLOY_KNOWN_HOSTS != ''
+      github.ref == 'refs/heads/main'
     steps:
+      - name: Validate required deploy secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          required_vars=(
+            DEPLOY_HOST
+            DEPLOY_USER
+            DEPLOY_PATH
+            DEPLOY_SSH_KEY
+            DEPLOY_KNOWN_HOSTS
+          )
+          for var in "${required_vars[@]}"; do
+            if [ -z "${!var:-}" ]; then
+              echo "Missing required secret: $var" >&2
+              exit 1
+            fi
+          done
+
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
