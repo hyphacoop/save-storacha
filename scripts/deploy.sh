@@ -10,6 +10,21 @@ PREV_REF="$(git rev-parse HEAD)"
 CHECKED_OUT_NEW_REF=0
 ROLLBACK_DONE=0
 
+restart_service() {
+  local service="$1"
+  if systemctl restart "$service"; then
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    sudo -n systemctl restart "$service"
+    return 0
+  fi
+
+  echo "Failed to restart ${service}: no non-interactive privilege path available"
+  return 1
+}
+
 rollback() {
   if [[ "$CHECKED_OUT_NEW_REF" -ne 1 || "$ROLLBACK_DONE" -eq 1 ]]; then
     return
@@ -19,7 +34,7 @@ rollback() {
   git checkout --force "${PREV_REF}"
   npm ci
   if [[ -n "${DEPLOY_SERVICE:-}" ]]; then
-    systemctl restart "${DEPLOY_SERVICE}"
+    restart_service "${DEPLOY_SERVICE}"
   fi
   ROLLBACK_DONE=1
 }
@@ -47,7 +62,7 @@ npm run test:ci
 
 if [[ -n "${DEPLOY_SERVICE:-}" ]]; then
   echo "Restarting service ${DEPLOY_SERVICE}"
-  systemctl restart "${DEPLOY_SERVICE}"
+  restart_service "${DEPLOY_SERVICE}"
 fi
 
 if [[ -n "${DEPLOY_HEALTHCHECK_URL:-}" ]]; then
