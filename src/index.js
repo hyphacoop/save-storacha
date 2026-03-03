@@ -23,6 +23,7 @@ import spaceRoutes from './routes/spaceRoutes.js';
 import delegationRoutes from './routes/delegationRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import bridgeRoutes from './routes/bridgeRoutes.js';
+import healthRoutes from './routes/healthRoutes.js';
 import { logger } from './lib/logger.js';
 
 const app = express();
@@ -100,6 +101,9 @@ async function main() {
         logger.info('Server initialization complete');
 
         // Mount route handlers - each handles a specific domain of functionality
+        app.use('/', healthRoutes);
+        logger.info('Health routes mounted');
+
         app.use('/auth', authRoutes);
         logger.info('Auth routes mounted');
 

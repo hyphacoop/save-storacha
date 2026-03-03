@@ -22,6 +22,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs/promises';
 import { logger } from './logger.js';
+import { assertDbEncryptionConfig } from './dbEncryption.js';
 
 // Database file location - stored in a dedicated data directory
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'delegations.db');
@@ -46,6 +47,7 @@ async function ensureDataDir() {
  * Initializes the database connection 
  */
 export async function initializeDatabase() {
+    assertDbEncryptionConfig();
     await ensureDataDir();
     
     // Query-level logging is opt-in so production/staging do not emit SQL by default.

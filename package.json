@@ -7,7 +7,11 @@
   "scripts": {
     "start": "node src/index.js",
     "clean-db": "node scripts/clean-database.js",
+    "migrate:encrypt:agent-data": "node scripts/migrate-encrypt-agent-data.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test:architecture": "node --experimental-vm-modules node_modules/.bin/jest tests/architecture-regression.test.mjs --runInBand",
+    "test:security": "node --experimental-vm-modules node_modules/.bin/jest tests/db-encryption.test.mjs tests/architecture-regression.test.mjs tests/health-route.test.mjs --runInBand",
+    "test:ci": "npm run test:security",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
     "test:verbose": "node --experimental-vm-modules node_modules/.bin/jest --verbose",
