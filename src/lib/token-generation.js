@@ -104,7 +104,7 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
 
         // Get the admin's client with their loaded delegations from login
         const db = getDatabase();
-        const adminAgent = db.prepare('SELECT id, agentData, status FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
+        const adminAgent = db.prepare('SELECT rowid AS rowId, agentData, status FROM admin_agents WHERE adminEmail = ?').get(adminEmail);
         
         if (!adminAgent || adminAgent.status !== 'active') {
             throw new Error(`No active admin agent found for ${adminEmail}`);
@@ -112,7 +112,7 @@ export async function generateTokens(adminEmailOrUserDid, resource, options = {}
 
         // Get the admin's client with their loaded delegations from login
         const principalKey = decryptFromStorage(adminAgent.agentData);
-        maybeReencryptAgentData(db, adminAgent.id, adminAgent.agentData);
+        maybeReencryptAgentData(db, adminAgent.rowId, adminAgent.agentData);
         const { getClientForPrincipal } = await import('./adminClientManager.js');
         client = await getClientForPrincipal(principalKey);
         
