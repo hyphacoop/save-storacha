@@ -100,7 +100,7 @@ export async function getAdminClient(email, did) {
     const { getDatabase } = await import('../lib/db.js');
     const db = getDatabase();
 
-    const agent = db.prepare('SELECT id, agentData FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
+    const agent = db.prepare('SELECT rowid AS rowId, agentData FROM admin_agents WHERE adminEmail = ? AND did = ? AND status = ?')
         .get(email, did, 'active');
 
     if (!agent || !agent.agentData) {
@@ -108,7 +108,7 @@ export async function getAdminClient(email, did) {
     }
 
     const principalKey = decryptFromStorage(agent.agentData);
-    maybeReencryptAgentData(db, agent.id, agent.agentData);
+    maybeReencryptAgentData(db, agent.rowId, agent.agentData);
 
     logger.info('Initializing client from stored device agent', { email, did });
     const client = await getClientForPrincipal(principalKey);

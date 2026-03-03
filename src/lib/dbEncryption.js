@@ -240,7 +240,7 @@ export function maybeReencryptAgentData(db, rowId, storedValue) {
     try {
         const plaintext = encrypted ? decryptFromStorage(storedValue) : storedValue;
         const rotated = encryptForStorage(plaintext);
-        db.prepare('UPDATE admin_agents SET agentData = ?, updatedAt = ? WHERE id = ?')
+        db.prepare('UPDATE admin_agents SET agentData = ?, updatedAt = ? WHERE rowid = ?')
             .run(rotated, Date.now(), rowId);
         logger.info('Migrated agent data to active encryption key', {
             rowId,

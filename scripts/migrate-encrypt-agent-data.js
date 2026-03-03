@@ -17,7 +17,7 @@ if (!isEncryptedValue(probe)) {
 }
 
 const db = new Database(DB_PATH);
-const rows = db.prepare('SELECT id, agentData FROM admin_agents').all();
+const rows = db.prepare('SELECT rowid AS rowId, agentData FROM admin_agents').all();
 const activeKeyId = getActiveKeyId();
 if (!activeKeyId) {
     console.error('No active encryption key configured.');
@@ -36,7 +36,7 @@ if (rowsToMigrate.length === 0) {
     process.exit(0);
 }
 
-const update = db.prepare('UPDATE admin_agents SET agentData = ?, updatedAt = ? WHERE id = ?');
+const update = db.prepare('UPDATE admin_agents SET agentData = ?, updatedAt = ? WHERE rowid = ?');
 const now = Date.now();
 
 const tx = db.transaction(() => {
@@ -44,9 +44,9 @@ const tx = db.transaction(() => {
         const plaintext = isEncryptedValue(row.agentData) ? decryptFromStorage(row.agentData) : row.agentData;
         const encrypted = encryptForStorage(plaintext);
         if (!isEncryptedValue(encrypted)) {
-            throw new Error(`Failed to encrypt row id=${row.id}`);
+            throw new Error(`Failed to encrypt row rowid=${row.rowId}`);
         }
-        update.run(encrypted, now, row.id);
+        update.run(encrypted, now, row.rowId);
     }
 });
 
