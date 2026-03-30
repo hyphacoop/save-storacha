@@ -87,7 +87,7 @@ export async function verifySignedChallenge(did, challengeId, signature) {
         // Debug timing info
         const now = Date.now()
         const timeRemaining = challengeRecord.expiresAt - now
-        logger.info('Challenge timing debug', { 
+        logger.debug('Challenge timing debug', {
             did, 
             challengeId, 
             used: challengeRecord.used,
@@ -110,7 +110,7 @@ export async function verifySignedChallenge(did, challengeId, signature) {
         const challengeBytes = new TextEncoder().encode(challengeRecord.challenge)
         const signatureBytes = base64.baseDecode(signature)
         
-        logger.info('Signature verification debug', {
+        logger.debug('Signature verification debug', {
             did,
             challengeId,
             challengeLength: challengeRecord.challenge.length,
