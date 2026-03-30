@@ -4,7 +4,7 @@ A service for managing secure file uploads to Filecoin using Storacha with UCAN-
 
 ## Overview
 
-save-storacha enables space admins to delegate upload capabilities to users without requiring users to create Storacha accounts. Admins authenticate via email, create spaces, and delegate capabilities. Users receive delegations and upload files directly.
+save-storacha enables space admins to delegate upload capabilities to users without requiring users to create Storacha accounts. Admins authenticate via email, create spaces, and delegate capabilities. Users upload files through the service.
 
 ## Features
 
@@ -12,7 +12,7 @@ save-storacha enables space admins to delegate upload capabilities to users with
 - **UCAN delegation system** - Users upload without Storacha accounts
 - **Space management** - List spaces
 - **Session management** - Secure device-specific sessions
-- **File uploads** - Users upload via delegation proofs
+- **File uploads** - Users upload files through the service; server handles CAR conversion and Storacha forwarding
 - **Usage tracking** - Monitor space and account storage usage
 
 ## Architecture
@@ -39,18 +39,15 @@ flowchart LR
     %% storacha storage
     subgraph Storacha["storacha"]
         style Storacha fill:#181818,stroke:#555,color:#ddd
-        Bridge["HTTP API"]
         Storage["Filecoin Storage"]
-        Bridge --> Storage
     end
 
     %% flows
     AA -- "POST /auth/login" --> API
     AA -- "POST /delegations/create" --> API
-    UA -- "POST /bridge-tokens" --> API
-    API -- "auth headers" --> UA
-    UA -- "CAR + headers" --> Bridge
-    Bridge -- "receipt" --> UA
+    UA -- "POST /upload (file)" --> API
+    SDK -- "upload" --> Storage
+    API -- "CID receipt" --> UA
 ```
 
 ## How It Works
@@ -63,7 +60,7 @@ flowchart LR
 
 ### User Flow
 1. Receive delegation from admin
-2. Upload files using delegation proof
+2. Upload files via `POST /upload` on the service
 3. Files stored in admin's space on Filecoin
 
 ### Multi-Device Support
